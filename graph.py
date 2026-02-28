@@ -99,11 +99,10 @@ Dive deep! Explore using read_around until you have a full understanding of the 
 
 # ── agent ────────────────────────────────────────────────────────────────────
 
-model = init_chat_model(
-    "google_genai:gemini-3-flash-preview",
-    include_thoughts=True,
-)
-
+# model = init_chat_model("openai:gpt-5.2")
+# model = init_chat_model("deepseek-chat")
+# model = init_chat_model("google_genai:gemini-3-flash-preview", include_thoughts=True)
+model = init_chat_model("google_genai:gemini-3.1-pro-preview", include_thoughts=True, max_retries=2)
 
 def make_agent(checkpointer=None):
     return create_deep_agent(
@@ -112,9 +111,6 @@ def make_agent(checkpointer=None):
         backend=FilesystemBackend(root_dir=V8_REPO, virtual_mode=True),
         system_prompt=v8_instructions,
         checkpointer=checkpointer,
-        interrupt_on={
-            "git_show": {"allowed_decisions": ["approve", "edit", "reject"]},
-        },
     )
 
 
