@@ -1,0 +1,33 @@
+[project]
+name = "ai-tools"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+
+dependencies = [
+    "deepagents>=0.4.4",
+    "langchain-deepseek>=1.0.1",
+    "langchain-google-genai>=4.2.1",
+    "langchain[google-genai]>=1.2.10",
+    "langgraph>=1.0.10",
+    "langgraph-checkpoint-sqlite>=3.0.3",
+    "langgraph-cli[inmem]>=0.4.12",
+    "langsmith>=0.7.9",
+    "prompt-toolkit>=3.0.52",
+    "ruff>=0.15.4",
+    "tavily-python>=0.7.22",
+    "textual>=8.0.0",
+    "platformdirs>=4.0",
+    "trafilatura>=2.0.0",
+]
+
+[project.scripts]
+agent = "cli:main"
+qq = "qq:main"
+commitmsg = "commitmsg:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["cli", "commitmsg", "graph", "qq", "session"]
+packages = ["tools"]

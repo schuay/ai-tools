@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "v8_explainer": "./src/graph.py:agent"
+  },
+  "env": ".env"
+}

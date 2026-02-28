@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+logs/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets
+.env
+
+# Tool caches / local state
+.ruff_cache/
+.langgraph_api/
+.claude/
+
+.langgraph_api/
