@@ -5,8 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "deepagents>=0.4.4",
     "langchain-google-genai>=4.2.1",
+    "langchain[google-genai]>=1.2.10",
     "langgraph>=1.0.10",
     "langgraph-checkpoint-sqlite>=3.0.3",
+    "langgraph-cli[inmem]>=0.4.12",
     "langsmith>=0.7.9",
+    "prompt-toolkit>=3.0.52",
+    "tavily-python>=0.7.22",
 ]
