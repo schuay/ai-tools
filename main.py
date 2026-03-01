@@ -17,9 +17,9 @@ from graph import make_agent
 agent = make_agent(checkpointer=MemorySaver())
 
 # ANSI colour helpers
-_DIM    = "\033[2m"
-_RESET  = "\033[0m"
-_BOLD   = "\033[1m"
+_DIM = "\033[2m"
+_RESET = "\033[0m"
+_BOLD = "\033[1m"
 _YELLOW = "\033[33m"
 
 
@@ -29,13 +29,16 @@ _YELLOW = "\033[33m"
 _history = InMemoryHistory()
 _kb = KeyBindings()
 
+
 @_kb.add("enter")
 def _newline(event):
     event.current_buffer.insert_text("\n")
 
-@_kb.add("escape", "enter")   # Meta+Enter
+
+@_kb.add("escape", "enter")  # Meta+Enter
 def _submit(event):
     event.current_buffer.validate_and_handle()
+
 
 def _prompt(label: str) -> str:
     return prompt(
@@ -48,6 +51,7 @@ def _prompt(label: str) -> str:
 
 
 # ── HITL interrupt handler ──────────────────────────────────────────────────
+
 
 def _handle_interrupt(value: object) -> Command:
     """Present an interrupt to the CLI user and return the Command to resume."""
@@ -65,8 +69,8 @@ def _handle_interrupt(value: object) -> Command:
         for action_req, review_cfg in zip(
             value["action_requests"], value["review_configs"]
         ):
-            name    = action_req["name"]
-            args    = action_req["args"]
+            name = action_req["name"]
+            args = action_req["args"]
             allowed = review_cfg["allowed_decisions"]
 
             print(f"{_YELLOW}{_BOLD}[approve?]{_RESET} tool={_BOLD}{name}{_RESET}")
@@ -83,13 +87,20 @@ def _handle_interrupt(value: object) -> Command:
                 decisions.append({"type": "approve"})
             elif choice == "reject":
                 msg = _prompt("  rejection message (optional): ")
-                decisions.append({"type": "reject", **({"message": msg} if msg else {})})
+                decisions.append(
+                    {"type": "reject", **({"message": msg} if msg else {})}
+                )
             elif choice == "edit":
                 print(f"  current args: {json.dumps(args)}")
                 raw = _prompt("  new args (JSON): ")
                 try:
                     new_args = json.loads(raw)
-                    decisions.append({"type": "edit", "edited_action": {"name": name, "args": new_args}})
+                    decisions.append(
+                        {
+                            "type": "edit",
+                            "edited_action": {"name": name, "args": new_args},
+                        }
+                    )
                 except json.JSONDecodeError:
                     print("  invalid JSON — approving as-is")
                     decisions.append({"type": "approve"})
@@ -113,16 +124,18 @@ commit_hash = sys.argv[1]
 config = {"configurable": {"thread_id": str(uuid.uuid4())}}
 
 current_input: dict | Command = {
-    "messages": [{
-        "role": "user",
-        "content": f"Please explain git commit {commit_hash} from the v8 repository.",
-    }]
+    "messages": [
+        {
+            "role": "user",
+            "content": f"Please explain git commit {commit_hash} from the v8 repository.",
+        }
+    ]
 }
 
 # ── streaming loop (resumes automatically after each interrupt) ─────────────
 
 _current_block: str | None = None
-_seen_tool_ids: set[str]   = set()
+_seen_tool_ids: set[str] = set()
 
 while True:
     resume_command: Command | None = None
@@ -149,7 +162,7 @@ while True:
             if isinstance(chunk, AIMessageChunk) and chunk.tool_call_chunks:
                 for tc in chunk.tool_call_chunks:
                     tool_id = tc.get("id")
-                    name    = tc.get("name")
+                    name = tc.get("name")
                     if name and tool_id and tool_id not in _seen_tool_ids:
                         _seen_tool_ids.add(tool_id)
                         if _current_block:
@@ -171,7 +184,11 @@ while True:
             if not content:
                 continue
 
-            blocks = content if isinstance(content, list) else [{"type": "text", "text": content}]
+            blocks = (
+                content
+                if isinstance(content, list)
+                else [{"type": "text", "text": content}]
+            )
 
             for block in blocks:
                 if not isinstance(block, dict):
@@ -201,7 +218,9 @@ while True:
     except KeyboardInterrupt:
         print(f"\n{_YELLOW}[interrupted]{_RESET}")
         try:
-            steering = _prompt(HTML("<b>steering (Meta+Enter to send, empty to quit)&gt; </b>"))
+            steering = _prompt(
+                HTML("<b>steering (Meta+Enter to send, empty to quit)&gt; </b>")
+            )
         except (KeyboardInterrupt, EOFError):
             sys.exit(0)
         if not steering:
@@ -211,7 +230,7 @@ while True:
         continue
 
     if resume_command is None:
-        break   # normal completion — no more interrupts
+        break  # normal completion — no more interrupts
     current_input = resume_command
 
 print()

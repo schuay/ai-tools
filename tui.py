@@ -27,7 +27,7 @@ class AgentApp(App):
     """
 
     BINDINGS = [
-        ("pageup",   "page_up",   "Scroll up"),
+        ("pageup", "page_up", "Scroll up"),
         ("pagedown", "page_down", "Scroll down"),
     ]
 

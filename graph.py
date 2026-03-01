@@ -1,4 +1,5 @@
 """Importable agent definition — used by both main.py (CLI) and langgraph dev (Studio)."""
+
 import subprocess
 
 from langchain.chat_models import init_chat_model
@@ -11,6 +12,7 @@ V8_REPO = "/home/jakob/src/v8"
 
 
 # ── tools ───────────────────────────────────────────────────────────────────
+
 
 def git_show(commit_hash: str) -> str:
     """Show the diff and metadata for a git commit in the v8 repository."""
@@ -33,6 +35,7 @@ def read_around(file_path: str, line: int, context: int = 20) -> str:
     context: number of lines to show before and after
     """
     import os
+
     full_path = os.path.join(V8_REPO, file_path)
     try:
         with open(full_path, "r", errors="replace") as f:
@@ -107,7 +110,10 @@ Dive deep! Explore using read_around until you have a full understanding of the 
 # init_chat_model("google_genai:gemini-3-flash-preview", include_thoughts=True)
 # init_chat_model("google_genai:gemini-3.1-pro-preview", include_thoughts=True, max_retries=6)
 
-_default_model = init_chat_model("google_genai:gemini-3-flash-preview", include_thoughts=True)
+_default_model = init_chat_model(
+    "google_genai:gemini-3-flash-preview", include_thoughts=True
+)
+
 
 def make_agent(model=None, checkpointer=None):
     return create_deep_agent(

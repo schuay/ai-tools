@@ -16,12 +16,18 @@ import uuid
 from threading import Event
 from typing import Protocol
 
+
 class _Stopped(Exception):
     """Raised internally to unwind the call stack when stop() is called."""
 
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessageChunk,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
@@ -30,13 +36,16 @@ from graph import make_agent
 
 # ── IO protocol ──────────────────────────────────────────────────────────────
 
+
 class SessionIO(Protocol):
     """What the Session needs from the UI. Called from the worker thread."""
+
     def write(self, text: str, style: str | None = None) -> None: ...
     def set_status(self, text: str) -> None: ...
 
 
 # ── streaming helper ─────────────────────────────────────────────────────────
+
 
 class _LineBuffer:
     """
@@ -63,6 +72,7 @@ class _LineBuffer:
 
 
 # ── session ──────────────────────────────────────────────────────────────────
+
 
 class Session:
     """
@@ -137,8 +147,8 @@ class Session:
     def stop(self) -> None:
         """Signal the worker thread to exit. Called from the UI thread."""
         self._stop.set()
-        self._input_event.set()   # unblocks _wait_input
-        self._steer_event.set()   # unblocks _stream on next chunk check
+        self._input_event.set()  # unblocks _wait_input
+        self._steer_event.set()  # unblocks _stream on next chunk check
 
     def submit(self, text: str) -> None:
         """Called from the UI thread when the user presses Enter."""
@@ -160,8 +170,8 @@ class Session:
                 if steered:
                     user_msg = self._steer_value
                     continue
-                self._history.append({"role": "user",      "content": user_msg})
-                self._history.append({"role": "assistant",  "content": response})
+                self._history.append({"role": "user", "content": user_msg})
+                self._history.append({"role": "assistant", "content": response})
                 user_msg = self._wait_input("> ")
         except _Stopped:
             pass
@@ -213,7 +223,11 @@ class Session:
         name = self._route(user_msg)
         self._io.write(f"[{name}]", style="bold blue")
         self._io.set_status("Agent is running…")
-        return name, self._agents[name], {"configurable": {"thread_id": str(uuid.uuid4())}}
+        return (
+            name,
+            self._agents[name],
+            {"configurable": {"thread_id": str(uuid.uuid4())}},
+        )
 
     # ── streaming ────────────────────────────────────────────────────────────
 
@@ -241,7 +255,11 @@ class Session:
 
             if mode == "updates" and "__interrupt__" in data:
                 buf.flush()
-                return False, self._handle_interrupt(data["__interrupt__"][0].value), text_parts
+                return (
+                    False,
+                    self._handle_interrupt(data["__interrupt__"][0].value),
+                    text_parts,
+                )
 
             if mode != "messages":
                 continue
@@ -250,7 +268,11 @@ class Session:
 
             if isinstance(chunk, AIMessageChunk) and chunk.tool_call_chunks:
                 for tc in chunk.tool_call_chunks:
-                    if tc.get("name") and tc.get("id") and tc["id"] not in seen_tool_ids:
+                    if (
+                        tc.get("name")
+                        and tc.get("id")
+                        and tc["id"] not in seen_tool_ids
+                    ):
                         seen_tool_ids.add(tc["id"])
                         buf.flush()
                         current_block = None
@@ -259,14 +281,18 @@ class Session:
 
             if isinstance(chunk, ToolMessage):
                 buf.flush()
-                self._io.write(f"  → {str(chunk.content)[:120].replace(chr(10), ' ')}…", style="dim")
+                self._io.write(
+                    f"  → {str(chunk.content)[:120].replace(chr(10), ' ')}…",
+                    style="dim",
+                )
                 continue
 
             if not isinstance(chunk, AIMessageChunk) or not chunk.content:
                 continue
 
             content_blocks = (
-                chunk.content if isinstance(chunk.content, list)
+                chunk.content
+                if isinstance(chunk.content, list)
                 else [{"type": "text", "text": chunk.content}]
             )
             for block in content_blocks:
@@ -306,10 +332,12 @@ class Session:
                 return name
 
         try:
-            resp = self._router.invoke([
-                SystemMessage(content=self._router_prompt()),
-                HumanMessage(content=query),
-            ])
+            resp = self._router.invoke(
+                [
+                    SystemMessage(content=self._router_prompt()),
+                    HumanMessage(content=query),
+                ]
+            )
             raw = resp.content.strip()
             normalized = raw.lower()
             if normalized in self.AGENTS:
@@ -320,9 +348,13 @@ class Session:
                 if name in normalized:
                     self._io.write(f"[routing → {name} (fuzzy: {raw!r})]", style="dim")
                     return name
-            self._io.write(f"[routing → {self.DEFAULT_AGENT} (no match: {raw!r})]", style="dim")
+            self._io.write(
+                f"[routing → {self.DEFAULT_AGENT} (no match: {raw!r})]", style="dim"
+            )
         except Exception as e:
-            self._io.write(f"[routing → {self.DEFAULT_AGENT} (error: {e})]", style="dim")
+            self._io.write(
+                f"[routing → {self.DEFAULT_AGENT} (error: {e})]", style="dim"
+            )
         return self.DEFAULT_AGENT
 
     def _router_prompt(self) -> str:
@@ -378,7 +410,10 @@ class Session:
                 self._io.write(f"  current args: {json.dumps(args)}")
                 raw = self._wait_input("new args (JSON): ")
                 try:
-                    return {"type": "edit", "edited_action": {"name": name, "args": json.loads(raw)}}
+                    return {
+                        "type": "edit",
+                        "edited_action": {"name": name, "args": json.loads(raw)},
+                    }
                 except json.JSONDecodeError:
                     self._io.write("  invalid JSON — approving as-is")
                     return {"type": "approve"}
