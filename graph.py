@@ -101,8 +101,10 @@ Dive deep! Explore using read_around until you have a full understanding of the 
 
 # model = init_chat_model("openai:gpt-5.2")
 # model = init_chat_model("deepseek-chat")
-# model = init_chat_model("google_genai:gemini-3-flash-preview", include_thoughts=True)
-model = init_chat_model("google_genai:gemini-3.1-pro-preview", include_thoughts=True, max_retries=2)
+# model = init_chat_model("deepseek-reasoner")
+# model = init_chat_model("deepseek:deepseek-v3.2-speciale")
+model = init_chat_model("google_genai:gemini-3-flash-preview", include_thoughts=True)
+# model = init_chat_model("google_genai:gemini-3.1-pro-preview", include_thoughts=True, max_retries=6)
 
 def make_agent(checkpointer=None):
     return create_deep_agent(

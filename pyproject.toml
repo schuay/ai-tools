@@ -15,4 +15,5 @@ dependencies = [
     "langsmith>=0.7.9",
     "prompt-toolkit>=3.0.52",
     "tavily-python>=0.7.22",
+    "textual>=8.0.0",
 ]
