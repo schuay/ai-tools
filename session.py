@@ -288,12 +288,10 @@ class Session:
                 for tc in chunk.tool_call_chunks:
                     tool_id = tc.get("id")
                     if tool_id:
-                        tool_call_args[tool_id] = tool_call_args.get(tool_id, "") + tc.get("args", "")
-                    if (
-                        tc.get("name")
-                        and tool_id
-                        and tool_id not in seen_tool_ids
-                    ):
+                        tool_call_args[tool_id] = tool_call_args.get(
+                            tool_id, ""
+                        ) + tc.get("args", "")
+                    if tc.get("name") and tool_id and tool_id not in seen_tool_ids:
                         seen_tool_ids.add(tool_id)
                         buf.flush()
                         current_block = None
@@ -370,7 +368,8 @@ class Session:
             content = resp.content
             if isinstance(content, list):
                 content = " ".join(
-                    b.get("text", "") for b in content
+                    b.get("text", "")
+                    for b in content
                     if isinstance(b, dict) and b.get("type") == "text"
                 )
             raw = content.strip()

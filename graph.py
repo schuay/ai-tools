@@ -14,6 +14,19 @@ V8_REPO = "/home/jakob/src/v8"
 # ── tools ───────────────────────────────────────────────────────────────────
 
 
+def trim_to_context(full_text: str, line: int | None, context: int = 20):
+    if line is None:
+        return full_text
+
+    lines = full_text.splitlines(keepends=True)
+    start = max(0, line - 1 - context)
+    end = min(len(lines), line - 1 + context + 1)
+    return "".join(
+        f"{i + 1:>6}  {'>>>' if i + 1 == line else '   '}  {lines[i]}"
+        for i in range(start, end)
+    )
+
+
 def git_show(commit_hash: str) -> str:
     """Show the diff and metadata for a git commit in the v8 repository."""
     result = subprocess.run(
@@ -39,19 +52,14 @@ def read_around(file_path: str, line: int, context: int = 20) -> str:
     full_path = os.path.join(V8_REPO, file_path)
     try:
         with open(full_path, "r", errors="replace") as f:
-            lines = f.readlines()
+            return trim_to_context(f.read(), line, context)
     except OSError as e:
         return f"Error reading {full_path}: {e}"
 
-    start = max(0, line - 1 - context)
-    end = min(len(lines), line - 1 + context + 1)
-    return "".join(
-        f"{i + 1:>6}  {'>>>' if i + 1 == line else '   '}  {lines[i]}"
-        for i in range(start, end)
-    )
 
-
-def git_show_file(commit_hash: str, file_path: str, line: int | None = None, context: int = 20) -> str:
+def git_show_file(
+    commit_hash: str, file_path: str, line: int | None = None, context: int = 20
+) -> str:
     """Show the content of a file as it existed at a given commit in the v8 repository.
 
     commit_hash: the git commit hash
@@ -71,20 +79,21 @@ def git_show_file(commit_hash: str, file_path: str, line: int | None = None, con
     if line is None:
         return result.stdout
 
-    lines = result.stdout.splitlines(keepends=True)
-    start = max(0, line - 1 - context)
-    end = min(len(lines), line - 1 + context + 1)
-    return "".join(
-        f"{i + 1:>6}  {'>>>' if i + 1 == line else '   '}  {lines[i]}"
-        for i in range(start, end)
-    )
+    return trim_to_context(result.stdout, line, context)
 
 
-def git_blame(file_path: str, commit_hash: str | None = None) -> str:
+def git_blame(
+    file_path: str,
+    commit_hash: str | None = None,
+    line: int | None = None,
+    context: int = 20,
+) -> str:
     """Show git blame for a file in the v8 repository.
 
     file_path: path relative to the v8 repo root
     commit_hash: if given, show blame as of that commit; defaults to HEAD
+    line: if given, centre the output on this 1-based line number and show `context` lines around it
+    context: lines to show before and after `line` (default 20); ignored when line is not given
     """
     cmd = ["git", "blame", "--date=short"]
     if commit_hash:
@@ -94,7 +103,11 @@ def git_blame(file_path: str, commit_hash: str | None = None) -> str:
     result = subprocess.run(cmd, cwd=V8_REPO, capture_output=True, text=True)
     if result.returncode != 0:
         return f"Error: {result.stderr.strip()}"
-    return result.stdout
+
+    if line is None:
+        return result.stdout
+
+    return trim_to_context(result.stdout, line, context)
 
 
 def ask_user(question: str) -> str:
