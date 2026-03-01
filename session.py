@@ -1,0 +1,397 @@
+"""
+Multi-agent conversation session.
+
+All agent logic lives here: registry, routing, conversation history,
+LangGraph streaming, and interrupt handling.
+
+The UI supplies a SessionIO implementation and calls:
+    session.submit(text)   — user pressed Enter
+    session.run()          — blocks; run on a worker thread
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from threading import Event
+from typing import Protocol
+
+class _Stopped(Exception):
+    """Raised internally to unwind the call stack when stop() is called."""
+
+
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
+
+from graph import make_agent
+
+
+# ── IO protocol ──────────────────────────────────────────────────────────────
+
+class SessionIO(Protocol):
+    """What the Session needs from the UI. Called from the worker thread."""
+    def write(self, text: str, style: str | None = None) -> None: ...
+    def set_status(self, text: str) -> None: ...
+
+
+# ── streaming helper ─────────────────────────────────────────────────────────
+
+class _LineBuffer:
+    """
+    Accumulates streaming text and flushes to SessionIO one line at a time.
+    Holds the current incomplete line until a newline arrives or flush() is called.
+    """
+
+    def __init__(self, io: SessionIO) -> None:
+        self._io = io
+        self._buf = ""
+        self._style: str | None = None
+
+    def push(self, text: str, style: str | None = None) -> None:
+        self._style = style
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            self._io.write(line, style=style)
+
+    def flush(self) -> None:
+        if self._buf:
+            self._io.write(self._buf, style=self._style)
+            self._buf = ""
+
+
+# ── session ──────────────────────────────────────────────────────────────────
+
+class Session:
+    """
+    Manages a multi-agent conversation: routing, history, streaming, interrupts.
+
+    Override class-level attributes to customise agents and routing without
+    touching any other code:
+
+        class MySession(Session):
+            AGENTS = {
+                "my-agent": {
+                    "model_id": "openai:gpt-4o",
+                    "description": "GPT-4o for everything",
+                },
+            }
+            DEFAULT_AGENT = "my-agent"
+    """
+
+    # ── agent registry ───────────────────────────────────────────────────────
+    # Each entry: model_id (required), description (required for router prompt),
+    # plus any extra kwargs forwarded to init_chat_model.
+
+    AGENTS: dict[str, dict] = {
+        "gpt": {
+            "model_id": "openai:gpt-5.2",
+            "description": "OpenAI GPT — strong general reasoning",
+        },
+        "deepseek": {
+            "model_id": "deepseek-chat",
+            "description": "DeepSeek chat — good for code, concise answers",
+        },
+        "deepseek-v3": {
+            "model_id": "deepseek:deepseek-v3.2-speciale",
+            "description": "DeepSeek v3 special — alternative capable model",
+        },
+        "gemini-flash": {
+            "model_id": "google_genai:gemini-3-flash-preview",
+            "include_thoughts": True,
+            "description": "Gemini Flash — fast and cheap for simple queries",
+        },
+        "gemini-pro": {
+            "model_id": "google_genai:gemini-3.1-pro-preview",
+            "include_thoughts": True,
+            "max_retries": 6,
+            "description": "Gemini Pro — thorough analysis, the default",
+        },
+    }
+    DEFAULT_AGENT = "gemini-flash"
+    ROUTER_MODEL_ID = "google_genai:gemini-3-flash-preview"
+
+    # Keys in AGENTS entries that are not forwarded to init_chat_model.
+    _METADATA_KEYS = frozenset({"model_id", "description"})
+
+    def __init__(self, io: SessionIO, commit_hash: str) -> None:
+        self._io = io
+        self.commit_hash = commit_hash
+
+        self._agents = self._build_agents()
+        self._router = init_chat_model(self.ROUTER_MODEL_ID)
+        self._history: list[dict] = []
+
+        # Thread synchronisation between the worker (session) and main (UI) threads.
+        self._input_event = Event()
+        self._input_value = ""
+        self._waiting_for_input = False
+        self._steer_event = Event()
+        self._steer_value = ""
+        self._stop = Event()
+
+    # ── public API ───────────────────────────────────────────────────────────
+
+    def stop(self) -> None:
+        """Signal the worker thread to exit. Called from the UI thread."""
+        self._stop.set()
+        self._input_event.set()   # unblocks _wait_input
+        self._steer_event.set()   # unblocks _stream on next chunk check
+
+    def submit(self, text: str) -> None:
+        """Called from the UI thread when the user presses Enter."""
+        if self._waiting_for_input:
+            self._input_value = text
+            self._input_event.set()
+        else:
+            self._steer_value = text
+            self._steer_event.set()
+
+    def run(self) -> None:
+        """Main loop. Blocks; run on a dedicated worker thread."""
+        user_msg = (
+            f"Please explain git commit {self.commit_hash} from the v8 repository."
+        )
+        try:
+            while True:
+                steered, response = self._run_turn(user_msg)
+                if steered:
+                    user_msg = self._steer_value
+                    continue
+                self._history.append({"role": "user",      "content": user_msg})
+                self._history.append({"role": "assistant",  "content": response})
+                user_msg = self._wait_input("> ")
+        except _Stopped:
+            pass
+
+    # ── agent construction ───────────────────────────────────────────────────
+
+    def _build_agents(self) -> dict:
+        agents = {}
+        for name, cfg in self.AGENTS.items():
+            kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
+            agents[name] = make_agent(
+                model=init_chat_model(cfg["model_id"], **kwargs),
+                checkpointer=MemorySaver(),
+            )
+        return agents
+
+    # ── turn orchestration ───────────────────────────────────────────────────
+
+    def _run_turn(self, user_msg: str) -> tuple[bool, str]:
+        """
+        Route user_msg, run the agent to completion.
+        Returns (steered, response_for_history).
+        If steered, response is empty and self._steer_value holds the new message.
+        """
+        agent_name, agent, config = self._setup_turn(user_msg)
+
+        messages = [{"role": m["role"], "content": m["content"]} for m in self._history]
+        messages.append({"role": "user", "content": user_msg})
+        current_input: dict | Command = {"messages": messages}
+        response_parts: list[str] = []
+
+        while True:
+            self._steer_event.clear()
+            steered, resume, parts = self._stream(agent, config, current_input)
+            response_parts.extend(parts)
+
+            if steered:
+                self._io.write(f"[steered] {self._steer_value}", style="bold cyan")
+                return True, ""
+            if resume is not None:
+                current_input = resume
+                continue
+
+            return False, f"[{agent_name}]: {''.join(response_parts)}"
+
+    def _setup_turn(self, user_msg: str) -> tuple[str, object, dict]:
+        """Route, show agent header, return (name, agent, langgraph_config)."""
+        self._io.set_status("routing…")
+        name = self._route(user_msg)
+        self._io.write(f"[{name}]", style="bold blue")
+        self._io.set_status("Agent is running…")
+        return name, self._agents[name], {"configurable": {"thread_id": str(uuid.uuid4())}}
+
+    # ── streaming ────────────────────────────────────────────────────────────
+
+    def _stream(
+        self, agent, config: dict, current_input: dict | Command
+    ) -> tuple[bool, Command | None, list[str]]:
+        """
+        Drive one agent.stream() call.
+        Returns (steered, resume_command_or_None, accumulated_text_parts).
+        """
+        text_parts: list[str] = []
+        current_block: str | None = None
+        seen_tool_ids: set[str] = set()
+        buf = _LineBuffer(self._io)
+
+        for mode, data in agent.stream(
+            current_input, config=config, stream_mode=["messages", "updates"]
+        ):
+            if self._stop.is_set():
+                buf.flush()
+                raise _Stopped()
+            if self._steer_event.is_set():
+                buf.flush()
+                return True, None, text_parts
+
+            if mode == "updates" and "__interrupt__" in data:
+                buf.flush()
+                return False, self._handle_interrupt(data["__interrupt__"][0].value), text_parts
+
+            if mode != "messages":
+                continue
+
+            chunk, _meta = data
+
+            if isinstance(chunk, AIMessageChunk) and chunk.tool_call_chunks:
+                for tc in chunk.tool_call_chunks:
+                    if tc.get("name") and tc.get("id") and tc["id"] not in seen_tool_ids:
+                        seen_tool_ids.add(tc["id"])
+                        buf.flush()
+                        current_block = None
+                        self._io.write(f"[tool] {tc['name']}", style="dim")
+                continue
+
+            if isinstance(chunk, ToolMessage):
+                buf.flush()
+                self._io.write(f"  → {str(chunk.content)[:120].replace(chr(10), ' ')}…", style="dim")
+                continue
+
+            if not isinstance(chunk, AIMessageChunk) or not chunk.content:
+                continue
+
+            content_blocks = (
+                chunk.content if isinstance(chunk.content, list)
+                else [{"type": "text", "text": chunk.content}]
+            )
+            for block in content_blocks:
+                if not isinstance(block, dict):
+                    continue
+                match block.get("type"):
+                    case "thinking":
+                        if text := block.get("thinking", ""):
+                            if current_block != "thinking":
+                                buf.flush()
+                                self._io.write("[thinking]", style="dim")
+                                current_block = "thinking"
+                            buf.push(text, style="dim")
+                    case "text":
+                        if text := block.get("text", ""):
+                            if current_block == "thinking":
+                                buf.flush()
+                            current_block = "text"
+                            text_parts.append(text)
+                            buf.push(text)
+
+        buf.flush()
+        return False, None, text_parts
+
+    # ── routing ──────────────────────────────────────────────────────────────
+
+    def _route(self, query: str) -> str:
+        """
+        Pick the best agent for this query.
+        Explicit name mention wins over the router LLM.
+        """
+        q = query.lower()
+        # Sort longest-first so "deepseek-r" is matched before "deepseek".
+        for name in sorted(self.AGENTS, key=len, reverse=True):
+            if name in q:
+                self._io.write(f"[routing → {name} (explicit)]", style="dim")
+                return name
+
+        try:
+            resp = self._router.invoke([
+                SystemMessage(content=self._router_prompt()),
+                HumanMessage(content=query),
+            ])
+            raw = resp.content.strip()
+            normalized = raw.lower()
+            if normalized in self.AGENTS:
+                self._io.write(f"[routing → {normalized}]", style="dim")
+                return normalized
+            # Fuzzy fallback: first agent name contained in the response.
+            for name in sorted(self.AGENTS, key=len, reverse=True):
+                if name in normalized:
+                    self._io.write(f"[routing → {name} (fuzzy: {raw!r})]", style="dim")
+                    return name
+            self._io.write(f"[routing → {self.DEFAULT_AGENT} (no match: {raw!r})]", style="dim")
+        except Exception as e:
+            self._io.write(f"[routing → {self.DEFAULT_AGENT} (error: {e})]", style="dim")
+        return self.DEFAULT_AGENT
+
+    def _router_prompt(self) -> str:
+        agent_list = ", ".join(self.AGENTS)
+        descriptions = "\n".join(
+            f"- {name}: {cfg['description']}" for name, cfg in self.AGENTS.items()
+        )
+        return (
+            f"Route the user query to one of these agents: {agent_list}.\n"
+            f"{descriptions}\n"
+            f"Reply with ONLY the agent name. Default to '{self.DEFAULT_AGENT}' if unclear."
+        )
+
+    # ── interrupt handling ───────────────────────────────────────────────────
+
+    def _handle_interrupt(self, value: object) -> Command:
+        if isinstance(value, dict) and "question" in value:
+            self._io.write(f"[agent asks] {value['question']}", style="bold yellow")
+            return Command(resume=self._wait_input("> "))
+
+        if isinstance(value, dict) and "action_requests" in value:
+            decisions = [
+                self._handle_hitl_action(req, cfg)
+                for req, cfg in zip(value["action_requests"], value["review_configs"])
+            ]
+            return Command(resume={"decisions": decisions})
+
+        self._io.write(f"[interrupt] {value!r}", style="yellow")
+        self._wait_input("Press Enter to continue… ")
+        return Command(resume=None)
+
+    def _handle_hitl_action(self, action_req: dict, review_cfg: dict) -> dict:
+        name, args = action_req["name"], action_req["args"]
+        allowed = review_cfg["allowed_decisions"]
+        opts = "/".join(allowed)
+
+        self._io.write(f"[approve?] tool={name}", style="bold yellow")
+        self._io.write(json.dumps(args, indent=2), style="dim")
+
+        while True:
+            choice = self._wait_input(f"[{opts}]> ").lower()
+            if choice in allowed:
+                break
+            self._io.write(f"  choose one of: {opts}")
+
+        match choice:
+            case "approve":
+                return {"type": "approve"}
+            case "reject":
+                msg = self._wait_input("rejection message (optional): ")
+                return {"type": "reject", **({"message": msg} if msg else {})}
+            case "edit":
+                self._io.write(f"  current args: {json.dumps(args)}")
+                raw = self._wait_input("new args (JSON): ")
+                try:
+                    return {"type": "edit", "edited_action": {"name": name, "args": json.loads(raw)}}
+                except json.JSONDecodeError:
+                    self._io.write("  invalid JSON — approving as-is")
+                    return {"type": "approve"}
+
+    # ── input synchronisation ────────────────────────────────────────────────
+
+    def _wait_input(self, prompt: str = "> ") -> str:
+        """Block the worker thread until submit() is called. Returns the submitted text."""
+        self._waiting_for_input = True
+        self._input_event.clear()
+        self._io.set_status(prompt)
+        self._input_event.wait()
+        self._waiting_for_input = False
+        if self._stop.is_set():
+            raise _Stopped()
+        return self._input_value

@@ -99,16 +99,19 @@ Dive deep! Explore using read_around until you have a full understanding of the 
 
 # ── agent ────────────────────────────────────────────────────────────────────
 
-# model = init_chat_model("openai:gpt-5.2")
-# model = init_chat_model("deepseek-chat")
-# model = init_chat_model("deepseek-reasoner")
-# model = init_chat_model("deepseek:deepseek-v3.2-speciale")
-model = init_chat_model("google_genai:gemini-3-flash-preview", include_thoughts=True)
-# model = init_chat_model("google_genai:gemini-3.1-pro-preview", include_thoughts=True, max_retries=6)
+# available models (passed in from callers; listed here for reference)
+# init_chat_model("openai:gpt-5.2")
+# init_chat_model("deepseek-chat")
+# init_chat_model("deepseek-reasoner")
+# init_chat_model("deepseek:deepseek-v3.2-speciale")
+# init_chat_model("google_genai:gemini-3-flash-preview", include_thoughts=True)
+# init_chat_model("google_genai:gemini-3.1-pro-preview", include_thoughts=True, max_retries=6)
 
-def make_agent(checkpointer=None):
+_default_model = init_chat_model("google_genai:gemini-3-flash-preview", include_thoughts=True)
+
+def make_agent(model=None, checkpointer=None):
     return create_deep_agent(
-        model=model,
+        model=model or _default_model,
         tools=[git_show, read_around, ask_user],
         backend=FilesystemBackend(root_dir=V8_REPO, virtual_mode=True),
         system_prompt=v8_instructions,
