@@ -114,10 +114,10 @@ class Session:
             "description": "Gemini Flash — fast and cheap for simple queries",
         },
         "gemini-pro": {
-            "model_id": "google_genai:gemini-3.1-pro-preview",
+            "model_id": "google_genai:gemini-3-pro-preview",
             "include_thoughts": True,
             "max_retries": 6,
-            "description": "Gemini Pro — thorough analysis, the default",
+            "description": "Gemini Pro — thorough analysis",
         },
     }
     DEFAULT_AGENT = "gemini-flash"
@@ -126,9 +126,9 @@ class Session:
     # Keys in AGENTS entries that are not forwarded to init_chat_model.
     _METADATA_KEYS = frozenset({"model_id", "description"})
 
-    def __init__(self, io: SessionIO, commit_hash: str) -> None:
+    def __init__(self, io: SessionIO, prompt: str) -> None:
         self._io = io
-        self.commit_hash = commit_hash
+        self._prompt = prompt
 
         self._agents = self._build_agents()
         self._router = init_chat_model(self.ROUTER_MODEL_ID)
@@ -161,12 +161,17 @@ class Session:
 
     def run(self) -> None:
         """Main loop. Blocks; run on a dedicated worker thread."""
-        user_msg = (
-            f"Please explain git commit {self.commit_hash} from the v8 repository."
-        )
+        user_msg = self._prompt
         try:
             while True:
-                steered, response = self._run_turn(user_msg)
+                try:
+                    steered, response = self._run_turn(user_msg)
+                except _Stopped:
+                    raise
+                except Exception as e:
+                    self._io.write(f"[error] {type(e).__name__}: {e}", style="bold red")
+                    user_msg = self._wait_input("> ")
+                    continue
                 if steered:
                     user_msg = self._steer_value
                     continue
@@ -241,6 +246,7 @@ class Session:
         text_parts: list[str] = []
         current_block: str | None = None
         seen_tool_ids: set[str] = set()
+        tool_call_args: dict[str, str] = {}
         buf = _LineBuffer(self._io)
 
         for mode, data in agent.stream(
@@ -268,12 +274,15 @@ class Session:
 
             if isinstance(chunk, AIMessageChunk) and chunk.tool_call_chunks:
                 for tc in chunk.tool_call_chunks:
+                    tool_id = tc.get("id")
+                    if tool_id:
+                        tool_call_args[tool_id] = tool_call_args.get(tool_id, "") + tc.get("args", "")
                     if (
                         tc.get("name")
-                        and tc.get("id")
-                        and tc["id"] not in seen_tool_ids
+                        and tool_id
+                        and tool_id not in seen_tool_ids
                     ):
-                        seen_tool_ids.add(tc["id"])
+                        seen_tool_ids.add(tool_id)
                         buf.flush()
                         current_block = None
                         self._io.write(f"[tool] {tc['name']}", style="dim")
@@ -281,6 +290,14 @@ class Session:
 
             if isinstance(chunk, ToolMessage):
                 buf.flush()
+                raw_args = tool_call_args.get(chunk.tool_call_id, "")
+                if raw_args:
+                    try:
+                        parsed = json.loads(raw_args)
+                        args_str = ", ".join(f"{k}={v!r}" for k, v in parsed.items())
+                    except json.JSONDecodeError:
+                        args_str = raw_args
+                    self._io.write(f"  ({args_str})", style="dim")
                 self._io.write(
                     f"  → {str(chunk.content)[:120].replace(chr(10), ' ')}…",
                     style="dim",
@@ -338,7 +355,13 @@ class Session:
                     HumanMessage(content=query),
                 ]
             )
-            raw = resp.content.strip()
+            content = resp.content
+            if isinstance(content, list):
+                content = " ".join(
+                    b.get("text", "") for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            raw = content.strip()
             normalized = raw.lower()
             if normalized in self.AGENTS:
                 self._io.write(f"[routing → {normalized}]", style="dim")

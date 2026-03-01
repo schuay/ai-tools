@@ -51,6 +51,52 @@ def read_around(file_path: str, line: int, context: int = 20) -> str:
     )
 
 
+def git_show_file(commit_hash: str, file_path: str, line: int | None = None, context: int = 20) -> str:
+    """Show the content of a file as it existed at a given commit in the v8 repository.
+
+    commit_hash: the git commit hash
+    file_path: path relative to the v8 repo root
+    line: if given, centre the output on this 1-based line number and show `context` lines around it
+    context: lines to show before and after `line` (default 20); ignored when line is not given
+    """
+    result = subprocess.run(
+        ["git", "show", f"{commit_hash}:{file_path}"],
+        cwd=V8_REPO,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return f"Error: {result.stderr.strip()}"
+
+    if line is None:
+        return result.stdout
+
+    lines = result.stdout.splitlines(keepends=True)
+    start = max(0, line - 1 - context)
+    end = min(len(lines), line - 1 + context + 1)
+    return "".join(
+        f"{i + 1:>6}  {'>>>' if i + 1 == line else '   '}  {lines[i]}"
+        for i in range(start, end)
+    )
+
+
+def git_blame(file_path: str, commit_hash: str | None = None) -> str:
+    """Show git blame for a file in the v8 repository.
+
+    file_path: path relative to the v8 repo root
+    commit_hash: if given, show blame as of that commit; defaults to HEAD
+    """
+    cmd = ["git", "blame", "--date=short"]
+    if commit_hash:
+        cmd.append(commit_hash)
+    cmd.append(file_path)
+
+    result = subprocess.run(cmd, cwd=V8_REPO, capture_output=True, text=True)
+    if result.returncode != 0:
+        return f"Error: {result.stderr.strip()}"
+    return result.stdout
+
+
 def ask_user(question: str) -> str:
     """Ask the human a clarifying question when you are uncertain about something.
 
@@ -65,32 +111,12 @@ def ask_user(question: str) -> str:
 v8_instructions = """You are an expert V8 JavaScript engine developer.
 Your job is to explain git commits from the V8 source repository clearly and concisely.
 
-You have access to these tools:
+Always start by calling git_show to read the diff. Use read_around liberally to build
+a thorough understanding of the surrounding code before drawing conclusions.
 
-## `git_show`
-Show the full diff and commit metadata for a given commit hash in the v8 repo.
-Always start by calling this to understand what changed.
-
-## `read_around`
-Read source lines around a specific location to understand context.
-Arguments:
-- file_path: path relative to v8 repo root
-- line: 1-based line number
-- context: lines before/after (default 20)
-
-Use read_around when the diff references code that needs broader context to understand.
-
-## `ask_user`
-Ask the human a clarifying question. MANDATORY: you MUST call ask_user at least once
-before writing your final explanation. Good questions to ask:
-- What level of detail does the user want? (high-level overview vs deep-dive)
-- Which subsystem should the focus be on if multiple are touched?
-- Is there background context the user already knows that you can skip?
-- Does anything in the diff look surprising or unclear to you?
-
-The user is a V8 expert — treat them as a peer, not a student.
-
-Dive deep! Explore using read_around until you have a full understanding of the domain.
+Use ask_user whenever there is something genuinely useful to learn from the human —
+whether that's about their background, the focus they want, or something in the diff
+that is ambiguous or surprising. The user is a V8 expert; treat them as a peer.
 
 ## Output format
 1. One-sentence summary of what the commit does.
@@ -118,7 +144,7 @@ _default_model = init_chat_model(
 def make_agent(model=None, checkpointer=None):
     return create_deep_agent(
         model=model or _default_model,
-        tools=[git_show, read_around, ask_user],
+        tools=[git_show, git_show_file, git_blame, read_around, ask_user],
         backend=FilesystemBackend(root_dir=V8_REPO, virtual_mode=True),
         system_prompt=v8_instructions,
         checkpointer=checkpointer,

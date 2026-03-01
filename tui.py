@@ -31,18 +31,18 @@ class AgentApp(App):
         ("pagedown", "page_down", "Scroll down"),
     ]
 
-    def __init__(self, commit_hash: str) -> None:
+    def __init__(self, prompt: str) -> None:
         super().__init__()
-        self._commit_hash = commit_hash
+        self._prompt = prompt
 
     def compose(self) -> ComposeResult:
         yield RichLog(highlight=True, markup=True, wrap=True)
         yield Input(placeholder="Agent is running…")
 
     def on_mount(self) -> None:
-        self._session = Session(io=self, commit_hash=self._commit_hash)
+        self._session = Session(io=self, prompt=self._prompt)
         self.query_one(Input).focus()
-        self._append(f"> explain {self._commit_hash}", style="bold green")
+        self._append(f"> {self._prompt}", style="bold green")
         self.run_worker(self._session.run, thread=True)
 
     def on_unmount(self) -> None:
@@ -88,6 +88,6 @@ class AgentApp(App):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python tui.py <git-hash>", file=sys.stderr)
+        print("Usage: python tui.py <prompt>", file=sys.stderr)
         sys.exit(1)
-    AgentApp(sys.argv[1]).run()
+    AgentApp(" ".join(sys.argv[1:])).run()
