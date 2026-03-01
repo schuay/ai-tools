@@ -119,6 +119,18 @@ class Session:
             "max_retries": 6,
             "description": "Gemini Pro — thorough analysis",
         },
+        "claude-haiku": {
+            "model_id": "anthropic:claude-haiku-4-5-20251001",
+            "description": "The fastest model with near-frontier intelligence",
+        },
+        "claude-sonnet": {
+            "model_id": "anthropic:claude-sonnet-4-6",
+            "description": "Claude Sonnet — very strong for code and nuance",
+        },
+        "claude-opus": {
+            "model_id": "anthropic:claude-opus-4-6",
+            "description": "Claude Opus — most powerful Claude model",
+        },
     }
     DEFAULT_AGENT = "gemini-flash"
     ROUTER_MODEL_ID = "google_genai:gemini-3-flash-preview"
