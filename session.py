@@ -157,6 +157,7 @@ class Session:
         self._agents = self._build_agents()
         self._router = init_chat_model(self.ROUTER_MODEL_ID)
         self._history: list[dict] = []
+        self._last_agent: str | None = None
 
         # Thread synchronisation between the worker (session) and main (UI) threads.
         self._input_event = Event()
@@ -259,6 +260,7 @@ class Session:
         """Route, show agent header, return (name, agent, langgraph_config)."""
         self._io.set_status("routing…")
         name = self._route(user_msg)
+        self._last_agent = name
         self._io.write(f"[{name}]", style="bold blue")
         self._io.set_status("Agent is running…")
         return (
@@ -407,14 +409,17 @@ class Session:
                 if name in normalized:
                     self._io.write(f"[routing → {name} (fuzzy: {raw!r})]", style="dim")
                     return name
+            fallback = self._last_agent or self.DEFAULT_AGENT
             self._io.write(
-                f"[routing → {self.DEFAULT_AGENT} (no match: {raw!r})]", style="dim"
+                f"[routing → {fallback} (no match: {raw!r})]", style="dim"
             )
+            return fallback
         except Exception as e:
+            fallback = self._last_agent or self.DEFAULT_AGENT
             self._io.write(
-                f"[routing → {self.DEFAULT_AGENT} (error: {e})]", style="dim"
+                f"[routing → {fallback} (error: {e})]", style="dim"
             )
-        return self.DEFAULT_AGENT
+        return self._last_agent or self.DEFAULT_AGENT
 
     def _router_prompt(self) -> str:
         agent_list = ", ".join(self.AGENTS)
