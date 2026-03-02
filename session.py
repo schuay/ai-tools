@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import traceback
-import uuid
 from datetime import datetime
 from pathlib import Path
 from threading import Event
@@ -187,6 +186,7 @@ class Session:
         self._router = init_chat_model(self.ROUTER_MODEL_ID)
         self._history: list[dict] = []
         self._last_agent: str | None = None
+        self._agent_history_offset: dict[str, int] = {}
 
         # Thread synchronisation between the worker (session) and main (UI) threads.
         self._input_event = Event()
@@ -234,6 +234,7 @@ class Session:
                 except _Interrupted:
                     self._history.append({"role": "user", "content": user_msg})
                     self._history.append({"role": "assistant", "content": "[interrupted]"})
+                    self._agent_history_offset[self._last_agent] = len(self._history)
                     self._io.write("[interrupted]", style="bold yellow")
                     user_msg = self._wait_input("> ")
                     force_agent = None
@@ -241,6 +242,7 @@ class Session:
                 except Exception as e:
                     self._history.append({"role": "user", "content": user_msg})
                     self._history.append({"role": "assistant", "content": f"[error: {type(e).__name__}]"})
+                    self._agent_history_offset[self._last_agent] = len(self._history)
                     self._io.write(f"[error] {type(e).__name__}: {str(e)}\n{traceback.format_exc()}", style="bold red")
                     user_msg = self._wait_input("> ")
                     force_agent = None
@@ -248,11 +250,13 @@ class Session:
                 if steered:
                     self._history.append({"role": "user", "content": user_msg})
                     self._history.append({"role": "assistant", "content": "[steered]"})
+                    self._agent_history_offset[self._last_agent] = len(self._history)
                     user_msg = self._steer_value
                     force_agent = self._last_agent  # stay on the active agent
                     continue
                 self._history.append({"role": "user", "content": user_msg})
                 self._history.append({"role": "assistant", "content": response})
+                self._agent_history_offset[self._last_agent] = len(self._history)
                 user_msg = self._wait_input("> ")
                 force_agent = None
         except _Stopped:
@@ -282,7 +286,10 @@ class Session:
         """
         agent_name, agent, config = self._setup_turn(user_msg, force_agent)
 
-        messages = [{"role": m["role"], "content": m["content"]} for m in self._history]
+        # Inject only the cross-agent history this agent hasn't seen yet.
+        # Its own prior turns are already in its LangGraph thread (tool calls included).
+        offset = self._agent_history_offset.get(agent_name, 0)
+        messages = [{"role": m["role"], "content": m["content"]} for m in self._history[offset:]]
         messages.append({"role": "user", "content": user_msg})
         current_input: dict | Command = {"messages": messages}
         response_parts: list[str] = []
@@ -308,13 +315,13 @@ class Session:
         else:
             self._io.set_status("routing…")
             name = self._route(user_msg)
-            self._last_agent = name
+        self._last_agent = name  # always track, including force_agent path
         self._io.write(f"[{name}]", style="bold blue")
         self._io.set_status("Agent is running…")
         return (
             name,
             self._agents[name],
-            {"configurable": {"thread_id": str(uuid.uuid4())}},
+            {"configurable": {"thread_id": name}},  # stable per-agent ID
         )
 
     # ── streaming ────────────────────────────────────────────────────────────
