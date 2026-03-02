@@ -420,6 +420,11 @@ class Session:
                 )
             raw = content.strip()
             normalized = raw.lower()
+            # "?" means the router is uncertain → stay on the last active agent.
+            if normalized == "?":
+                fallback = self._last_agent or self.DEFAULT_AGENT
+                self._io.write(f"[routing → {fallback} (continuing)]", style="dim")
+                return fallback
             if normalized in self.AGENTS:
                 self._io.write(f"[routing → {normalized}]", style="dim")
                 return normalized
@@ -448,7 +453,10 @@ class Session:
         return (
             f"Route the user query to one of these agents: {agent_list}.\n"
             f"{descriptions}\n"
-            f"Reply with ONLY the agent name. Default to '{self.DEFAULT_AGENT}' if unclear."
+            f"Reply with ONLY the agent name.\n"
+            f"Reply with exactly '?' if the query is a continuation or follow-up with no "
+            f"clear agent preference (e.g. 'continue', 'go on', 'ok', 'yes', bare questions "
+            f"that build on prior context). When in doubt, prefer '?'."
         )
 
     # ── interrupt handling ───────────────────────────────────────────────────
