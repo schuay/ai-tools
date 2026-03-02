@@ -159,12 +159,32 @@ _default_model = init_chat_model(
 )
 
 
-def make_agent(model=None, checkpointer=None):
+def _identity_section(name: str, all_agents: dict) -> str:
+    """Build a system-prompt preamble that tells the agent who it is."""
+    others = "\n".join(
+        f"  - {n}: {cfg['description']}"
+        for n, cfg in all_agents.items()
+        if n != name
+    )
+    return (
+        f"## Identity\n"
+        f'Your name in this session is "{name}".\n\n'
+        f"## Other agents in this session\n"
+        f"{others}\n\n"
+        f"When you see a message prefixed with an agent name followed by ':' or ',' "
+        f'(e.g. "claude-sonnet: what about X?"), that is a routing directive — '
+        f"the prefix names the intended recipient, not a subject of discussion. "
+        f"Ignore the prefix and focus on the content.\n\n"
+    )
+
+
+def make_agent(model=None, checkpointer=None, name: str | None = None, agents: dict | None = None):
+    identity = _identity_section(name, agents) if name and agents else ""
     return create_deep_agent(
         model=model or _default_model,
         tools=[git_show, git_show_file, git_blame, read_around, ask_user],
         backend=FilesystemBackend(root_dir=V8_REPO, virtual_mode=True),
-        system_prompt=v8_instructions,
+        system_prompt=identity + v8_instructions,
         checkpointer=checkpointer,
     )
 

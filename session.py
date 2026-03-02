@@ -236,6 +236,8 @@ class Session:
             agents[name] = make_agent(
                 model=init_chat_model(cfg["model_id"], **kwargs),
                 checkpointer=MemorySaver(),
+                name=name,
+                agents=self.AGENTS,
             )
         return agents
 
