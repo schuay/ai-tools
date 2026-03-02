@@ -12,10 +12,12 @@ The UI supplies a SessionIO implementation and calls:
 from __future__ import annotations
 
 import json
+import traceback
 import uuid
+from datetime import datetime
+from pathlib import Path
 from threading import Event
 from typing import Protocol
-import traceback
 
 class _Stopped(Exception):
     """Raised internally to unwind the call stack when stop() is called."""
@@ -46,6 +48,33 @@ class SessionIO(Protocol):
 
     def write(self, text: str, style: str | None = None) -> None: ...
     def set_status(self, text: str) -> None: ...
+
+
+_LOG_DIR = Path(__file__).parent / "logs"
+
+
+class _LoggingIO:
+    """Wraps a SessionIO and mirrors write() calls to a timestamped log file."""
+
+    def __init__(self, inner: SessionIO) -> None:
+        self._inner = inner
+        _LOG_DIR.mkdir(exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._f = (_LOG_DIR / f"{ts}.log").open("w", buffering=1, encoding="utf-8")
+
+    def write(self, text: str, style: str | None = None) -> None:
+        self._inner.write(text, style)
+        self._f.write(text + "\n")
+
+    def set_status(self, text: str) -> None:
+        self._inner.set_status(text)
+
+    def log(self, text: str) -> None:
+        """Write a line directly to the log (e.g. user input) without sending to UI."""
+        self._f.write(text + "\n")
+
+    def close(self) -> None:
+        self._f.close()
 
 
 # ── streaming helper ─────────────────────────────────────────────────────────
@@ -151,7 +180,7 @@ class Session:
     _METADATA_KEYS = frozenset({"model_id", "description"})
 
     def __init__(self, io: SessionIO, prompt: str) -> None:
-        self._io = io
+        self._io = _LoggingIO(io)
         self._prompt = prompt
 
         self._agents = self._build_agents()
@@ -175,6 +204,7 @@ class Session:
         self._stop.set()
         self._input_event.set()  # unblocks _wait_input
         self._steer_event.set()  # unblocks _stream on next chunk check
+        self._io.close()
 
     def interrupt(self) -> None:
         """Abort the current agent turn. Called from the UI thread (Esc key)."""
@@ -182,6 +212,7 @@ class Session:
 
     def submit(self, text: str) -> None:
         """Called from the UI thread when the user presses Enter."""
+        self._io.log(f"> {text}")
         if self._waiting_for_input:
             self._input_value = text
             self._input_event.set()
