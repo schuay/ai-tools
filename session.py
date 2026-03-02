@@ -15,7 +15,7 @@ import json
 import uuid
 from threading import Event
 from typing import Protocol
-
+import traceback
 
 class _Stopped(Exception):
     """Raised internally to unwind the call stack when stop() is called."""
@@ -100,6 +100,14 @@ class Session:
             "model_id": "openai:gpt-5.2",
             "description": "OpenAI GPT — strong general reasoning",
         },
+        "gpt-pro": {
+            "model_id": "openai:gpt-5.2-pro",
+            "description": "OpenAI GPT — Version of GPT-5.2 that produces smarter and more precise responses.",
+        },
+        "gpt-mini": {
+            "model_id": "openai:gpt-5-mini",
+            "description": "OpenAI GPT — GPT-5 mini is a faster, more cost-efficient version of GPT-5. It's great for well-defined tasks and precise prompts.",
+        },
         "deepseek": {
             "model_id": "deepseek-chat",
             "description": "DeepSeek chat — good for code, concise answers",
@@ -181,7 +189,7 @@ class Session:
                 except _Stopped:
                     raise
                 except Exception as e:
-                    self._io.write(f"[error] {type(e).__name__}: {e}", style="bold red")
+                    self._io.write(f"[error] {type(e).__name__}: {str(e)}\n{traceback.format_exc()}", style="bold red")
                     user_msg = self._wait_input("> ")
                     continue
                 if steered:
@@ -261,8 +269,8 @@ class Session:
         tool_call_args: dict[str, str] = {}
         buf = _LineBuffer(self._io)
 
-        for mode, data in agent.stream(
-            current_input, config=config, stream_mode=["messages", "updates"]
+        for namespace, mode, data in agent.stream(
+            current_input, config=config, stream_mode=["messages", "updates"], subgraphs=True,
         ):
             if self._stop.is_set():
                 buf.flush()
