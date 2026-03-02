@@ -288,6 +288,7 @@ class Session:
         """
         text_parts: list[str] = []
         current_block: str | None = None
+        current_ns: tuple = ()
         seen_tool_ids: set[str] = set()
         tool_call_args: dict[str, str] = {}
         buf = _LineBuffer(self._io)
@@ -305,6 +306,15 @@ class Session:
             if self._steer_event.is_set():
                 buf.flush()
                 return True, None, text_parts
+
+            if namespace != current_ns:
+                current_ns = namespace
+                if namespace:
+                    buf.flush()
+                    current_block = None
+                    # namespace entries look like "node_name:uuid"; strip the uuid
+                    label = " > ".join(ns.split(":")[0] for ns in namespace)
+                    self._io.write(f"  [{label}]", style="dim")
 
             if mode == "updates" and "__interrupt__" in data:
                 buf.flush()
