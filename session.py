@@ -114,7 +114,7 @@ class Session:
             "description": "Gemini Flash — fast and cheap for simple queries",
         },
         "gemini-pro": {
-            "model_id": "google_genai:gemini-3-pro-preview",
+            "model_id": "google_genai:gemini-3.1-pro-preview",
             "include_thoughts": True,
             "max_retries": 6,
             "description": "Gemini Pro — thorough analysis",
