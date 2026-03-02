@@ -9,8 +9,9 @@ the input placeholder from its worker thread.
 import sys
 
 from rich.text import Text
-from textual import events
+from textual import events, on
 from textual.app import App, ComposeResult
+from textual.message import Message
 from textual.widgets import RichLog, TextArea
 
 from session import Session
@@ -19,18 +20,30 @@ from session import Session
 class _InputArea(TextArea):
     """Compact input box: starts 1 line tall and grows with content.
 
-    TextArea's _on_key calls event.stop() for Enter (to insert a newline),
-    which prevents the event from ever reaching App.on_key. We intercept
-    Enter here — skip the insertion and let it bubble — so the App can
-    handle submission. Ctrl-J takes over the "insert newline" role.
+    Textual walks the full MRO when dispatching _on_key, so a bare `return`
+    in our override is not enough — TextArea._on_key would still run and
+    insert a newline. Instead, for Enter we call prevent_default() (which
+    sets _no_default_action, causing _get_dispatch_methods to break before
+    reaching TextArea) and stop() (prevents Key from bubbling), then post a
+    Submitted message that the App handles cleanly.
     """
+
+    class Submitted(Message):
+        def __init__(self, value: str) -> None:
+            super().__init__()
+            self.value = value
 
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "enter":
-            return  # don't insert "\n"; let the event bubble to App
-        if event.key == "ctrl+j":
-            event.stop()
             event.prevent_default()
+            event.stop()
+            value = self.text.strip()
+            if value:
+                self.post_message(self.Submitted(value))
+            return
+        if event.key == "ctrl+j":
+            event.prevent_default()
+            event.stop()
             self.insert("\n")
             return
         await super()._on_key(event)
@@ -124,17 +137,15 @@ class AgentApp(App):
 
     # ── submit ────────────────────────────────────────────────────────────────
 
-    def _submit(self) -> None:
+    @on(_InputArea.Submitted)
+    def _on_submitted(self, event: _InputArea.Submitted) -> None:
         ta = self.query_one(_InputArea)
-        value = ta.text.strip()
-        if not value:
-            return
         ta.load_text("")
-        self._history.append(value)
+        self._history.append(event.value)
         self._history_index = -1
         self._draft = ""
-        self._append(f"> {value}", style="bold green")
-        self._session.submit(value)
+        self._append(f"> {event.value}", style="bold green")
+        self._session.submit(event.value)
 
     # ── key handling ─────────────────────────────────────────────────────────
 
@@ -142,10 +153,6 @@ class AgentApp(App):
         if event.key == "escape":
             event.prevent_default()
             self._session.interrupt()
-            return
-        if event.key == "enter":
-            event.prevent_default()
-            self._submit()
             return
         ta = self.query_one(_InputArea)
         if event.key == "up" and ta.cursor_location == (0, 0):
