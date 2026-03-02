@@ -12,10 +12,11 @@ The UI supplies a SessionIO implementation and calls:
 from __future__ import annotations
 
 import json
+import queue
 import traceback
 from datetime import datetime
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from typing import Protocol
 
 class _Stopped(Exception):
@@ -332,7 +333,30 @@ class Session:
         """
         Drive one agent.stream() call.
         Returns (steered, resume_command_or_None, accumulated_text_parts).
+
+        The generator runs in a producer thread so that the worker thread can
+        check the interrupt/stop/steer events every POLL_MS milliseconds instead
+        of only between chunks (which could be 10s+ apart during LLM thinking or
+        tool execution).
         """
+        POLL_MS = 0.05  # 50 ms
+
+        chunk_q: queue.Queue = queue.Queue()
+
+        def _producer() -> None:
+            try:
+                for item in agent.stream(
+                    current_input, config=config,
+                    stream_mode=["messages", "updates"], subgraphs=True,
+                ):
+                    chunk_q.put(("chunk", item))
+            except Exception as exc:
+                chunk_q.put(("error", exc))
+            finally:
+                chunk_q.put(("done", None))
+
+        Thread(target=_producer, daemon=True).start()
+
         text_parts: list[str] = []
         current_block: str | None = None
         current_ns: tuple = ()
@@ -340,9 +364,8 @@ class Session:
         tool_call_args: dict[str, str] = {}
         buf = _LineBuffer(self._io)
 
-        for namespace, mode, data in agent.stream(
-            current_input, config=config, stream_mode=["messages", "updates"], subgraphs=True,
-        ):
+        while True:
+            # Check control events before blocking on the next chunk.
             if self._stop.is_set():
                 buf.flush()
                 raise _Stopped()
@@ -353,6 +376,18 @@ class Session:
             if self._steer_event.is_set():
                 buf.flush()
                 return True, None, text_parts
+
+            try:
+                kind, item = chunk_q.get(timeout=POLL_MS)
+            except queue.Empty:
+                continue
+
+            if kind == "done":
+                break
+            if kind == "error":
+                raise item  # type: ignore[misc]
+
+            namespace, mode, data = item
 
             if namespace != current_ns:
                 current_ns = namespace
