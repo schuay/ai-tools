@@ -16,6 +16,31 @@ from textual.widgets import RichLog, TextArea
 from session import Session
 
 
+class _InputArea(TextArea):
+    """Compact input box: starts 1 line tall and grows with content.
+
+    TextArea's _on_key calls event.stop() for Enter (to insert a newline),
+    which prevents the event from ever reaching App.on_key. We intercept
+    Enter here — skip the insertion and let it bubble — so the App can
+    handle submission. Ctrl-J takes over the "insert newline" role.
+    """
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            return  # don't insert "\n"; let the event bubble to App
+        if event.key == "ctrl+j":
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            return
+        await super()._on_key(event)
+
+    def on_text_area_changed(self, _: TextArea.Changed) -> None:
+        # +2 for the top and bottom border rows (border: tall)
+        num_lines = self.text.count("\n") + 1
+        self.styles.height = min(num_lines + 2, 12)
+
+
 class AgentApp(App):
     CSS = """
     RichLog {
@@ -24,7 +49,7 @@ class AgentApp(App):
         padding: 0 1;
         scrollbar-gutter: stable;
     }
-    TextArea {
+    _InputArea {
         dock: bottom;
         height: 3;
         max-height: 12;
@@ -47,12 +72,11 @@ class AgentApp(App):
 
     def compose(self) -> ComposeResult:
         yield RichLog(highlight=True, markup=True, wrap=True)
-        # Using TextArea for multiline support
-        yield TextArea(placeholder="Agent is running…")
+        yield _InputArea()
 
     def on_mount(self) -> None:
         self._session = Session(io=self, prompt=self._prompt)
-        self.query_one(TextArea).focus()
+        self.query_one(_InputArea).focus()
         self._append(f"> {self._prompt}", style="bold green")
         self.run_worker(self._session.run, thread=True)
 
@@ -68,7 +92,7 @@ class AgentApp(App):
     def set_status(self, text: str) -> None:
         self.call_from_thread(self._set_placeholder, text)
 
-    # ── internal UI helpers (main thread only) ───────────────────────────────
+    # ── internal helpers (main thread only) ──────────────────────────────────
 
     def _append(self, text: str, style: str | None = None) -> None:
         log = self.query_one(RichLog)
@@ -76,89 +100,63 @@ class AgentApp(App):
         log.write(Text(text, style=style) if style else text)
 
     def _set_placeholder(self, text: str) -> None:
-        self.query_one(TextArea).placeholder = text
+        self.query_one(_InputArea).placeholder = text
 
-    # ── input and history ───────────────────────────────────────────────────
+    # ── history ──────────────────────────────────────────────────────────────
 
-    def _update_height(self, text: str) -> None:
-        """Update textarea height based on number of lines.
-
-        +2 accounts for the top and bottom border rows (border: tall).
-        """
-        num_lines = text.count("\n") + 1
-        self.query_one(TextArea).styles.height = min(num_lines + 2, 12)
-
-    def _handle_history(self, direction: int) -> None:
-        """Cycle through command history."""
+    def _navigate_history(self, direction: int) -> None:
+        """direction=+1: older entry (Up), direction=-1: newer entry (Down)."""
         if not self._history:
             return
-
-        textarea = self.query_one(TextArea)
-        # If moving from current draft, save it
+        ta = self.query_one(_InputArea)
         if self._history_index == -1:
-            self._draft = textarea.text
-
+            self._draft = ta.text
         new_index = self._history_index + direction
         if 0 <= new_index < len(self._history):
             self._history_index = new_index
-            textarea.load_text(self._history[-(new_index + 1)])
-            textarea.move_cursor((textarea.document.line_count, 0))
-            self._update_height(textarea.text)
+            ta.load_text(self._history[-(new_index + 1)])
         elif new_index == -1:
             self._history_index = -1
-            textarea.load_text(self._draft)
-            textarea.move_cursor((textarea.document.line_count, 0))
-            self._update_height(textarea.text)
+            ta.load_text(self._draft)
+        else:
+            return
+        ta.move_cursor((ta.document.line_count, 0))
+
+    # ── submit ────────────────────────────────────────────────────────────────
 
     def _submit(self) -> None:
-        """Submit current text and reset input."""
-        textarea = self.query_one(TextArea)
-        value = textarea.text.strip()
+        ta = self.query_one(_InputArea)
+        value = ta.text.strip()
         if not value:
             return
-
-        # Clear and reset
-        textarea.load_text("")
-        self._update_height("")
+        ta.load_text("")
         self._history.append(value)
         self._history_index = -1
         self._draft = ""
-
-        # Output and session logic
         self._append(f"> {value}", style="bold green")
         self._session.submit(value)
 
-    def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        self._update_height(event.text_area.text)
+    # ── key handling ─────────────────────────────────────────────────────────
 
     def on_key(self, event: events.Key) -> None:
-        textarea = self.query_one(TextArea)
-
         if event.key == "escape":
             event.prevent_default()
             self._session.interrupt()
-        elif event.key == "enter":
-            # Plain enter submits
+            return
+        if event.key == "enter":
             event.prevent_default()
             self._submit()
-        elif event.key == "ctrl+j":
-            # Ctrl-J inserts newline
+            return
+        ta = self.query_one(_InputArea)
+        if event.key == "up" and ta.cursor_location == (0, 0):
             event.prevent_default()
-            textarea.insert("\n")
-        elif event.key == "up":
-            # History up if at the very first line/position
-            if textarea.cursor_location == (0, 0):
-                event.prevent_default()
-                self._handle_history(1)
+            self._navigate_history(1)
         elif event.key == "down":
-            # History down if at the very last line/position
-            last_line = textarea.document.line_count - 1
-            last_col = len(textarea.document.get_line(last_line))
-            if textarea.cursor_location == (last_line, last_col):
+            last_line = ta.document.line_count - 1
+            last_col = len(ta.document.get_line(last_line))
+            if ta.cursor_location == (last_line, last_col):
                 event.prevent_default()
-                self._handle_history(-1)
-
-    # ── key bindings ─────────────────────────────────────────────────────────
+                self._navigate_history(-1)
 
     def action_page_up(self) -> None:
         self.query_one(RichLog).scroll_page_up()
