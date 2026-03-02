@@ -201,16 +201,22 @@ class Session:
                 except _Stopped:
                     raise
                 except _Interrupted:
+                    self._history.append({"role": "user", "content": user_msg})
+                    self._history.append({"role": "assistant", "content": "[interrupted]"})
                     self._io.write("[interrupted]", style="bold yellow")
                     user_msg = self._wait_input("> ")
                     force_agent = None
                     continue
                 except Exception as e:
+                    self._history.append({"role": "user", "content": user_msg})
+                    self._history.append({"role": "assistant", "content": f"[error: {type(e).__name__}]"})
                     self._io.write(f"[error] {type(e).__name__}: {str(e)}\n{traceback.format_exc()}", style="bold red")
                     user_msg = self._wait_input("> ")
                     force_agent = None
                     continue
                 if steered:
+                    self._history.append({"role": "user", "content": user_msg})
+                    self._history.append({"role": "assistant", "content": "[steered]"})
                     user_msg = self._steer_value
                     force_agent = self._last_agent  # stay on the active agent
                     continue
