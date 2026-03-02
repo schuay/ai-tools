@@ -464,8 +464,17 @@ class Session:
                                 current_block = "thinking"
                             buf.push(text, style="dim")
                     case "reasoning":
-                        # OpenAI reasoning summary (reasoning={"summary": "auto"})
-                        if text := block.get("summary", "") or block.get("reasoning", ""):
+                        # OpenAI reasoning summary: "summary" is a list of
+                        # {"type": "summary_text", "text": "..."} objects.
+                        raw = block.get("summary") or block.get("reasoning") or ""
+                        if isinstance(raw, list):
+                            text = " ".join(
+                                item.get("text", "") for item in raw
+                                if isinstance(item, dict)
+                            )
+                        else:
+                            text = raw
+                        if text:
                             if current_block != "reasoning":
                                 buf.flush()
                                 self._io.write("[reasoning]", style="dim")
