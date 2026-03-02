@@ -131,14 +131,17 @@ class Session:
     AGENTS: dict[str, dict] = {
         "gpt": {
             "model_id": "openai:gpt-5.2",
+            "reasoning": {"effort": "medium", "summary": "auto"},
             "description": "OpenAI GPT — strong general reasoning",
         },
         "gpt-pro": {
             "model_id": "openai:gpt-5.2-pro",
+            "reasoning": {"effort": "high", "summary": "auto"},
             "description": "OpenAI GPT — Version of GPT-5.2 that produces smarter and more precise responses.",
         },
         "gpt-mini": {
             "model_id": "openai:gpt-5-mini",
+            "reasoning": {"effort": "medium", "summary": "auto"},
             "description": "OpenAI GPT — GPT-5 mini is a faster, more cost-efficient version of GPT-5. It's great for well-defined tasks and precise prompts.",
         },
         "deepseek": {
@@ -460,9 +463,17 @@ class Session:
                                 self._io.write("[thinking]", style="dim")
                                 current_block = "thinking"
                             buf.push(text, style="dim")
+                    case "reasoning":
+                        # OpenAI reasoning summary (reasoning={"summary": "auto"})
+                        if text := block.get("summary", "") or block.get("reasoning", ""):
+                            if current_block != "reasoning":
+                                buf.flush()
+                                self._io.write("[reasoning]", style="dim")
+                                current_block = "reasoning"
+                            buf.push(text, style="dim")
                     case "text":
                         if text := block.get("text", ""):
-                            if current_block == "thinking":
+                            if current_block in ("thinking", "reasoning"):
                                 buf.flush()
                             current_block = "text"
                             text_parts.append(text)
