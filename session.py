@@ -195,6 +195,7 @@ class Session:
         force_agent: str | None = None
         try:
             while True:
+                self._interrupt_event.clear()  # discard stale Esc presses from idle period
                 try:
                     steered, response = self._run_turn(user_msg, force_agent)
                 except _Stopped:
