@@ -26,8 +26,7 @@ class AgentApp(App):
     }
     TextArea {
         dock: bottom;
-        height: auto;
-        min-height: 3;
+        height: 3;
         max-height: 12;
         border: tall $primary;
         padding: 0 1;
@@ -82,9 +81,12 @@ class AgentApp(App):
     # ── input and history ───────────────────────────────────────────────────
 
     def _update_height(self, text: str) -> None:
-        """Update textarea height based on number of lines (max 10)."""
+        """Update textarea height based on number of lines.
+
+        +2 accounts for the top and bottom border rows (border: tall).
+        """
         num_lines = text.count("\n") + 1
-        self.query_one(TextArea).styles.height = min(num_lines, 10)
+        self.query_one(TextArea).styles.height = min(num_lines + 2, 12)
 
     def _handle_history(self, direction: int) -> None:
         """Cycle through command history."""
