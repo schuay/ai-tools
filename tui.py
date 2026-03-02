@@ -11,6 +11,7 @@ import sys
 from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import RichLog, TextArea
 
@@ -72,8 +73,8 @@ class AgentApp(App):
     """
 
     BINDINGS = [
-        ("pageup", "page_up", "Scroll up"),
-        ("pagedown", "page_down", "Scroll down"),
+        Binding("pageup", "page_up", "Scroll up", priority=True),
+        Binding("pagedown", "page_down", "Scroll down", priority=True),
     ]
 
     def __init__(self, prompt: str) -> None:
