@@ -192,26 +192,31 @@ class Session:
     def run(self) -> None:
         """Main loop. Blocks; run on a dedicated worker thread."""
         user_msg = self._prompt
+        force_agent: str | None = None
         try:
             while True:
                 try:
-                    steered, response = self._run_turn(user_msg)
+                    steered, response = self._run_turn(user_msg, force_agent)
                 except _Stopped:
                     raise
                 except _Interrupted:
                     self._io.write("[interrupted]", style="bold yellow")
                     user_msg = self._wait_input("> ")
+                    force_agent = None
                     continue
                 except Exception as e:
                     self._io.write(f"[error] {type(e).__name__}: {str(e)}\n{traceback.format_exc()}", style="bold red")
                     user_msg = self._wait_input("> ")
+                    force_agent = None
                     continue
                 if steered:
                     user_msg = self._steer_value
+                    force_agent = self._last_agent  # stay on the active agent
                     continue
                 self._history.append({"role": "user", "content": user_msg})
                 self._history.append({"role": "assistant", "content": response})
                 user_msg = self._wait_input("> ")
+                force_agent = None
         except _Stopped:
             pass
 
@@ -229,13 +234,13 @@ class Session:
 
     # ── turn orchestration ───────────────────────────────────────────────────
 
-    def _run_turn(self, user_msg: str) -> tuple[bool, str]:
+    def _run_turn(self, user_msg: str, force_agent: str | None = None) -> tuple[bool, str]:
         """
         Route user_msg, run the agent to completion.
         Returns (steered, response_for_history).
         If steered, response is empty and self._steer_value holds the new message.
         """
-        agent_name, agent, config = self._setup_turn(user_msg)
+        agent_name, agent, config = self._setup_turn(user_msg, force_agent)
 
         messages = [{"role": m["role"], "content": m["content"]} for m in self._history]
         messages.append({"role": "user", "content": user_msg})
@@ -256,11 +261,14 @@ class Session:
 
             return False, f"[{agent_name}]: {''.join(response_parts)}"
 
-    def _setup_turn(self, user_msg: str) -> tuple[str, object, dict]:
+    def _setup_turn(self, user_msg: str, force_agent: str | None = None) -> tuple[str, object, dict]:
         """Route, show agent header, return (name, agent, langgraph_config)."""
-        self._io.set_status("routing…")
-        name = self._route(user_msg)
-        self._last_agent = name
+        if force_agent:
+            name = force_agent
+        else:
+            self._io.set_status("routing…")
+            name = self._route(user_msg)
+            self._last_agent = name
         self._io.write(f"[{name}]", style="bold blue")
         self._io.set_status("Agent is running…")
         return (
