@@ -134,7 +134,10 @@ class AgentApp(App):
     def on_key(self, event: events.Key) -> None:
         textarea = self.query_one(TextArea)
 
-        if event.key == "enter":
+        if event.key == "escape":
+            event.prevent_default()
+            self._session.interrupt()
+        elif event.key == "enter":
             # Plain enter submits
             event.prevent_default()
             self._submit()

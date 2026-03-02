@@ -21,6 +21,10 @@ class _Stopped(Exception):
     """Raised internally to unwind the call stack when stop() is called."""
 
 
+class _Interrupted(Exception):
+    """Raised when the user presses Esc to abort the current agent turn."""
+
+
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import (
     AIMessageChunk,
@@ -161,6 +165,7 @@ class Session:
         self._steer_event = Event()
         self._steer_value = ""
         self._stop = Event()
+        self._interrupt_event = Event()
 
     # ── public API ───────────────────────────────────────────────────────────
 
@@ -169,6 +174,10 @@ class Session:
         self._stop.set()
         self._input_event.set()  # unblocks _wait_input
         self._steer_event.set()  # unblocks _stream on next chunk check
+
+    def interrupt(self) -> None:
+        """Abort the current agent turn. Called from the UI thread (Esc key)."""
+        self._interrupt_event.set()
 
     def submit(self, text: str) -> None:
         """Called from the UI thread when the user presses Enter."""
@@ -188,6 +197,10 @@ class Session:
                     steered, response = self._run_turn(user_msg)
                 except _Stopped:
                     raise
+                except _Interrupted:
+                    self._io.write("[interrupted]", style="bold yellow")
+                    user_msg = self._wait_input("> ")
+                    continue
                 except Exception as e:
                     self._io.write(f"[error] {type(e).__name__}: {str(e)}\n{traceback.format_exc()}", style="bold red")
                     user_msg = self._wait_input("> ")
@@ -275,6 +288,10 @@ class Session:
             if self._stop.is_set():
                 buf.flush()
                 raise _Stopped()
+            if self._interrupt_event.is_set():
+                self._interrupt_event.clear()
+                buf.flush()
+                raise _Interrupted()
             if self._steer_event.is_set():
                 buf.flush()
                 return True, None, text_parts
