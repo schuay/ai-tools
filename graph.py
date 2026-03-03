@@ -112,6 +112,40 @@ def git_blame(
     return trim_to_context(result.stdout, line, context)
 
 
+def git_log(
+    limit: int = 10,
+    oneline: bool = False,
+    grep: str | None = None,
+    author: str | None = None,
+) -> str:
+    """Show the git commit logs in the repository.
+
+    Use this to find relevant commits by message content, author, or just to see recent history.
+
+    limit: The maximum number of commits to show (default 10).
+    oneline: If true, show each commit as a single line (hash and subject).
+    grep: If provided, only show commits with messages matching this pattern.
+    author: If provided, only show commits by this author.
+    """
+    cmd = ["git", "log", f"-n{limit}"]
+    if oneline:
+        cmd.append("--oneline")
+    if grep:
+        cmd.append(f"--grep={grep}")
+    if author:
+        cmd.append(f"--author={author}")
+
+    result = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return f"Error: {result.stderr.strip()}"
+    return result.stdout
+
+
 def web_search(query: str, max_results: int = 5) -> str:
     """Search the web for real-time information, latest news, or technical documentation.
 
@@ -296,6 +330,7 @@ def make_agent(
             git_show,
             git_show_file,
             git_blame,
+            git_log,
             read_around,
             web_search,
             web_fetch,
