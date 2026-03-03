@@ -1,9 +1,13 @@
 """Importable agent definition — used by both main.py (CLI) and langgraph dev (Studio)."""
 
+import os
 import subprocess
 
+import httpx
+import trafilatura
 from langchain.chat_models import init_chat_model
 from langgraph.types import interrupt
+from tavily import TavilyClient
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
@@ -108,6 +112,72 @@ def git_blame(
         return result.stdout
 
     return trim_to_context(result.stdout, line, context)
+
+
+def web_search(query: str, max_results: int = 5) -> str:
+    """Search the web for real-time information, latest news, or technical documentation.
+
+    Use this tool when you need information that isn't in the local codebase,
+    such as external library documentation, recent V8 blog posts, or Chromium issue tracker details.
+
+    query: The search query string.
+    max_results: The maximum number of search results to return (default 5).
+    """
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        return "Error: TAVILY_API_KEY environment variable is not set."
+
+    try:
+        client = TavilyClient(api_key=api_key)
+        response = client.search(
+            query=query, search_depth="smart", max_results=max_results
+        )
+
+        results = []
+        for res in response.get("results", []):
+            results.append(
+                f"Title: {res['title']}\nURL: {res['url']}\nSnippet: {res['content']}\n---"
+            )
+
+        return "\n".join(results) if results else "No results found."
+    except Exception as e:
+        return f"Error performing web search: {e}"
+
+
+def web_fetch(url: str) -> str:
+    """Fetch and extract the main text content from a specific URL.
+
+    Use this tool to read the full content of a webpage (like a blog post,
+    documentation page, or bug report) after finding a promising URL via web_search.
+    It automatically strips away navigation, ads, and boilerplate.
+
+    url: The full URL of the page to fetch.
+    """
+    try:
+        # Using a sync request for simplicity as the other tools are sync
+        with httpx.Client(follow_redirects=True, timeout=15.0) as client:
+            response = client.get(url)
+            response.raise_for_status()
+
+            # Extract content using trafilatura
+            content = trafilatura.extract(
+                response.text,
+                include_links=True,
+                include_comments=False,
+            )
+
+            if not content:
+                return "Error: Could not extract meaningful content from the page."
+
+            # Truncate if extremely long to avoid context window overflow
+            if len(content) > 30000:
+                content = content[:30000] + "\n... (content truncated for length)"
+
+            return content
+    except httpx.HTTPStatusError as e:
+        return f"HTTP Error fetching {url}: {e.response.status_code}"
+    except Exception as e:
+        return f"Error fetching {url}: {e}"
 
 
 def ask_user(question: str) -> str:
@@ -220,7 +290,15 @@ def make_agent(
     identity = _identity_section(name, agents) if name and agents else ""
     return create_deep_agent(
         model=model or _default_model,
-        tools=[git_show, git_show_file, git_blame, read_around, ask_user],
+        tools=[
+            git_show,
+            git_show_file,
+            git_blame,
+            read_around,
+            web_search,
+            web_fetch,
+            ask_user,
+        ],
         backend=FilesystemBackend(root_dir=V8_REPO, virtual_mode=True),
         system_prompt=identity + v8_instructions,
         checkpointer=checkpointer,
