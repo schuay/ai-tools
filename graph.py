@@ -12,7 +12,7 @@ from tavily import TavilyClient
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
 
-V8_REPO = "/home/jakob/src/v8"
+REPO_ROOT = os.getcwd()
 
 
 # ── tools ───────────────────────────────────────────────────────────────────
@@ -32,10 +32,10 @@ def trim_to_context(full_text: str, line: int | None, context: int = 20):
 
 
 def git_show(commit_hash: str) -> str:
-    """Show the diff and metadata for a git commit in the v8 repository."""
+    """Show the diff and metadata for a git commit in the repository."""
     result = subprocess.run(
         ["git", "show", commit_hash],
-        cwd=V8_REPO,
+        cwd=REPO_ROOT,
         capture_output=True,
         text=True,
     )
@@ -45,15 +45,13 @@ def git_show(commit_hash: str) -> str:
 
 
 def read_around(file_path: str, line: int, context: int = 20) -> str:
-    """Read lines around a given line number in a file inside the v8 repository.
+    """Read lines around a given line number in a file inside the repository.
 
-    file_path: path relative to the v8 repo root
+    file_path: path relative to the repo root
     line: 1-based line number to centre on
     context: number of lines to show before and after
     """
-    import os
-
-    full_path = os.path.join(V8_REPO, file_path)
+    full_path = os.path.join(REPO_ROOT, file_path)
     try:
         with open(full_path, "r", errors="replace") as f:
             return trim_to_context(f.read(), line, context)
@@ -64,16 +62,16 @@ def read_around(file_path: str, line: int, context: int = 20) -> str:
 def git_show_file(
     commit_hash: str, file_path: str, line: int | None = None, context: int = 20
 ) -> str:
-    """Show the content of a file as it existed at a given commit in the v8 repository.
+    """Show the content of a file as it existed at a given commit in the repository.
 
     commit_hash: the git commit hash
-    file_path: path relative to the v8 repo root
+    file_path: path relative to the repo root
     line: if given, centre the output on this 1-based line number and show `context` lines around it
     context: lines to show before and after `line` (default 20); ignored when line is not given
     """
     result = subprocess.run(
         ["git", "show", f"{commit_hash}:{file_path}"],
-        cwd=V8_REPO,
+        cwd=REPO_ROOT,
         capture_output=True,
         text=True,
     )
@@ -92,9 +90,9 @@ def git_blame(
     line: int | None = None,
     context: int = 20,
 ) -> str:
-    """Show git blame for a file in the v8 repository.
+    """Show git blame for a file in the repository.
 
-    file_path: path relative to the v8 repo root
+    file_path: path relative to the repo root
     commit_hash: if given, show blame as of that commit; defaults to HEAD
     line: if given, centre the output on this 1-based line number and show `context` lines around it
     context: lines to show before and after `line` (default 20); ignored when line is not given
@@ -104,7 +102,7 @@ def git_blame(
         cmd.append(commit_hash)
     cmd.append(file_path)
 
-    result = subprocess.run(cmd, cwd=V8_REPO, capture_output=True, text=True)
+    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
     if result.returncode != 0:
         return f"Error: {result.stderr.strip()}"
 
@@ -220,6 +218,10 @@ callers, callees, related types, invariants established elsewhere. Follow data
 structures and control flow as far as needed for a grounded answer. Use git_blame
 to understand when and why something was introduced.
 
+When local code is not enough—for example, when referencing a specific Chromium
+bug ID, an entry in the V8 blog, or a proposal in the TC39 repository—use
+web_search to find context and web_fetch to read the details.
+
 Apply V8 expertise actively. When you recognise a pattern, name it: IC miss, map
 transition, deoptimisation bail-out, write-barrier elision, escape analysis, store-
 load forwarding, safepoint, handle scope, etc. Connect implementation choices to
@@ -299,7 +301,7 @@ def make_agent(
             web_fetch,
             ask_user,
         ],
-        backend=FilesystemBackend(root_dir=V8_REPO, virtual_mode=True),
+        backend=FilesystemBackend(root_dir=REPO_ROOT, virtual_mode=True),
         system_prompt=identity + v8_instructions,
         checkpointer=checkpointer,
     )
