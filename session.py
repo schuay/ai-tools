@@ -546,13 +546,18 @@ class Session:
                 return name
 
         try:
-            resp = self._router.invoke(
-                    [
+            state = self._router.invoke(
+                {
+                    "messages": [
                         SystemMessage(content=self._router_prompt()),
                         HumanMessage(content=query),
                     ]
+                },
+                config={"configurable": {"thread_id": "router-session"}},
             )
-            content = resp.content
+            # create_deep_agent returns the state dict; get the last message's content
+            last_msg = state["messages"][-1]
+            content = last_msg.content
             if isinstance(content, list):
                 content = " ".join(
                     b.get("text", "")
