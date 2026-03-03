@@ -197,7 +197,9 @@ class Session:
         self._prompt = prompt
 
         self._agents = self._build_agents()
-        self._router = self._build_agent(ROUTER_AGENT_NAME, self.AGENTS[ROUTER_AGENT_NAME])
+        self._router = self._build_agent(
+            self.ROUTER_AGENT_NAME, self.AGENTS[self.ROUTER_AGENT_NAME]
+        )
         self._history: list[dict] = []
         self._last_agent: str | None = None
         self._agent_history_offset: dict[str, int] = {}
@@ -545,10 +547,10 @@ class Session:
 
         try:
             resp = self._router.invoke(
-                [
-                    SystemMessage(content=self._router_prompt()),
-                    HumanMessage(content=query),
-                ]
+                    [
+                        SystemMessage(content=self._router_prompt()),
+                        HumanMessage(content=query),
+                    ]
             )
             content = resp.content
             if isinstance(content, list):

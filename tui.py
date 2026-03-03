@@ -95,7 +95,8 @@ class AgentApp(App):
         self.run_worker(self._session.run, thread=True)
 
     def on_unmount(self) -> None:
-        self._session.stop()
+        if hasattr(self, "_session"):
+            self._session.stop()
 
     # ── SessionIO ────────────────────────────────────────────────────────────
     # These are called from the session's worker thread.
