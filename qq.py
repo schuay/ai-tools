@@ -12,6 +12,7 @@ Flags:
 """
 
 import os
+import re
 import subprocess
 import sys
 from argparse import ArgumentParser
@@ -199,17 +200,67 @@ def _extract_text(content: object) -> str:
     return str(content)
 
 
+STDIN_INLINE_LIMIT = 8_000   # chars; beyond this, expose grep/read tools instead
+STDIN_PREVIEW_LINES = 20
+
+
+def _make_stdin_tools(data: str):
+    """Return (grep_stdin, read_stdin) closures operating on an in-memory string."""
+    lines = data.splitlines()
+
+    def grep_stdin(pattern: str, context_lines: int = 2) -> str:
+        """Search stdin content with a regex pattern.
+
+        pattern: regex to search for (Python re syntax)
+        context_lines: lines of context before/after each match (default 2)
+        """
+        out: list[str] = []
+        for i, line in enumerate(lines):
+            if re.search(pattern, line):
+                start = max(0, i - context_lines)
+                end = min(len(lines), i + context_lines + 1)
+                out.append(f"--- line {i + 1} ---")
+                out.extend(f"{j + 1:>6}  {lines[j]}" for j in range(start, end))
+        return "\n".join(out) if out else "No matches found."
+
+    def read_stdin(start_line: int = 1, num_lines: int = 100) -> str:
+        """Read a range of lines from stdin content.
+
+        start_line: 1-based line to start from (default 1)
+        num_lines: number of lines to return (default 100)
+        """
+        start = max(0, start_line - 1)
+        end = min(len(lines), start + num_lines)
+        return "\n".join(f"{i + 1:>6}  {lines[i]}" for i in range(start, end))
+
+    return grep_stdin, read_stdin
+
+
 def run(query: str, stdin_data: str) -> str:
     tools = [web_search, web_fetch]
     if _in_git_repo():
         tools = [git_show, git_show_file, git_blame, git_log, read_around] + tools
 
-    model = init_chat_model(MODEL_ID, **MODEL_KWARGS).bind_tools(tools)
-    tool_map = {fn.__name__: fn for fn in tools}
-
     human_content = query
     if stdin_data:
-        human_content = f"{query}\n\n<stdin>\n{stdin_data.strip()}\n</stdin>"
+        if len(stdin_data) <= STDIN_INLINE_LIMIT:
+            human_content = f"{query}\n\n<stdin>\n{stdin_data.strip()}\n</stdin>"
+        else:
+            # Too large to inline: show a preview and expose search/read tools.
+            grep_stdin, read_stdin = _make_stdin_tools(stdin_data)
+            tools = [grep_stdin, read_stdin] + tools
+            preview = "\n".join(stdin_data.splitlines()[:STDIN_PREVIEW_LINES])
+            total_lines = stdin_data.count("\n") + 1
+            human_content = (
+                f"{query}\n\n"
+                f"<stdin total_lines={total_lines}>\n"
+                f"{preview}\n"
+                f"... (use grep_stdin / read_stdin to explore the rest)\n"
+                f"</stdin>"
+            )
+
+    model = init_chat_model(MODEL_ID, **MODEL_KWARGS).bind_tools(tools)
+    tool_map = {fn.__name__: fn for fn in tools}
 
     messages: list = [
         SystemMessage(content=SYSTEM_PROMPT),
