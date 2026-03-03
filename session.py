@@ -197,9 +197,12 @@ class Session:
         self._prompt = prompt
 
         self._agents = self._build_agents()
-        self._router = self._build_agent(
-            self.ROUTER_AGENT_NAME, self.AGENTS[self.ROUTER_AGENT_NAME]
-        )
+        # The router should be a raw model, not a deep agent, for speed and simplicity.
+        router_cfg = self.AGENTS[self.ROUTER_AGENT_NAME]
+        router_kwargs = {
+            k: v for k, v in router_cfg.items() if k not in self._METADATA_KEYS
+        }
+        self._router = init_chat_model(router_cfg["model_id"], **router_kwargs)
         self._history: list[dict] = []
         self._last_agent: str | None = None
         self._agent_history_offset: dict[str, int] = {}
@@ -546,18 +549,13 @@ class Session:
                 return name
 
         try:
-            state = self._router.invoke(
-                {
-                    "messages": [
-                        SystemMessage(content=self._router_prompt()),
-                        HumanMessage(content=query),
-                    ]
-                },
-                config={"configurable": {"thread_id": "router-session"}},
+            resp = self._router.invoke(
+                [
+                    SystemMessage(content=self._router_prompt()),
+                    HumanMessage(content=query),
+                ]
             )
-            # create_deep_agent returns the state dict; get the last message's content
-            last_msg = state["messages"][-1]
-            content = last_msg.content
+            content = resp.content
             if isinstance(content, list):
                 content = " ".join(
                     b.get("text", "")
