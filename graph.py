@@ -162,7 +162,7 @@ def web_search(query: str, max_results: int = 5) -> str:
     try:
         client = TavilyClient(api_key=api_key)
         response = client.search(
-            query=query, search_depth="smart", max_results=max_results
+            query=query, search_depth="basic", max_results=max_results
         )
 
         results = []

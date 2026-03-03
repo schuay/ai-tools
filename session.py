@@ -154,6 +154,12 @@ class Session:
             "model_id": "deepseek:deepseek-v3.2-speciale",
             "description": "DeepSeek v3 special — alternative capable model",
         },
+        "gemini-flash-mini": {
+            "model_id": "google_genai:gemini-3-flash-preview",
+            "include_thoughts": True,
+            "thinking_level": "minimal",
+            "description": "Gemini Flash — fast and cheap for simple queries. Thinking level: none",
+        },
         "gemini-flash": {
             "model_id": "google_genai:gemini-3-flash-preview",
             "include_thoughts": True,
@@ -181,7 +187,7 @@ class Session:
         },
     }
     DEFAULT_AGENT = "gemini-flash"
-    ROUTER_MODEL_ID = "google_genai:gemini-3-flash-preview"
+    ROUTER_AGENT_NAME = "gemini-flash-mini"
 
     # Keys in AGENTS entries that are not forwarded to init_chat_model.
     _METADATA_KEYS = frozenset({"model_id", "description"})
@@ -191,7 +197,7 @@ class Session:
         self._prompt = prompt
 
         self._agents = self._build_agents()
-        self._router = init_chat_model(self.ROUTER_MODEL_ID)
+        self._router = self._build_agent(ROUTER_AGENT_NAME, self.AGENTS[ROUTER_AGENT_NAME])
         self._history: list[dict] = []
         self._last_agent: str | None = None
         self._agent_history_offset: dict[str, int] = {}
@@ -279,16 +285,19 @@ class Session:
 
     # ── agent construction ───────────────────────────────────────────────────
 
+    def _build_agent(self, name, cfg):
+        kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
+        return make_agent(
+            model=init_chat_model(cfg["model_id"], **kwargs),
+            checkpointer=MemorySaver(),
+            name=name,
+            agents=self.AGENTS,
+        )
+
     def _build_agents(self) -> dict:
         agents = {}
         for name, cfg in self.AGENTS.items():
-            kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
-            agents[name] = make_agent(
-                model=init_chat_model(cfg["model_id"], **kwargs),
-                checkpointer=MemorySaver(),
-                name=name,
-                agents=self.AGENTS,
-            )
+            agents[name] = self._build_agent(name, cfg)
         return agents
 
     # ── turn orchestration ───────────────────────────────────────────────────
