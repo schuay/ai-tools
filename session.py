@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import queue
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -368,6 +369,8 @@ class Session:
         seen_tool_ids: set[str] = set()
         tool_call_args: dict[str, str] = {}
         buf = _LineBuffer(self._io)
+        last_activity = time.monotonic()
+        shown_wait_secs = 0
 
         while True:
             # Check control events before blocking on the next chunk.
@@ -385,7 +388,14 @@ class Session:
             try:
                 kind, item = chunk_q.get(timeout=POLL_MS)
             except queue.Empty:
+                elapsed = int(time.monotonic() - last_activity)
+                if elapsed >= 3 and elapsed != shown_wait_secs:
+                    self._io.set_status(f"Waiting… ({elapsed}s)")
+                    shown_wait_secs = elapsed
                 continue
+
+            last_activity = time.monotonic()
+            shown_wait_secs = 0
 
             if kind == "done":
                 break
