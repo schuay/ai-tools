@@ -20,6 +20,7 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Protocol
 
+
 class _Stopped(Exception):
     """Raised internally to unwind the call stack when stop() is called."""
 
@@ -240,7 +241,9 @@ class Session:
                     raise
                 except _Interrupted:
                     self._history.append({"role": "user", "content": user_msg})
-                    self._history.append({"role": "assistant", "content": "[interrupted]"})
+                    self._history.append(
+                        {"role": "assistant", "content": "[interrupted]"}
+                    )
                     self._agent_history_offset[self._last_agent] = len(self._history)
                     self._io.write("[interrupted]", style="bold yellow")
                     user_msg = self._wait_input("> ")
@@ -248,9 +251,14 @@ class Session:
                     continue
                 except Exception as e:
                     self._history.append({"role": "user", "content": user_msg})
-                    self._history.append({"role": "assistant", "content": f"[error: {type(e).__name__}]"})
+                    self._history.append(
+                        {"role": "assistant", "content": f"[error: {type(e).__name__}]"}
+                    )
                     self._agent_history_offset[self._last_agent] = len(self._history)
-                    self._io.write(f"[error] {type(e).__name__}: {str(e)}\n{traceback.format_exc()}", style="bold red")
+                    self._io.write(
+                        f"[error] {type(e).__name__}: {str(e)}\n{traceback.format_exc()}",
+                        style="bold red",
+                    )
                     user_msg = self._wait_input("> ")
                     force_agent = None
                     continue
@@ -285,7 +293,9 @@ class Session:
 
     # ── turn orchestration ───────────────────────────────────────────────────
 
-    def _run_turn(self, user_msg: str, force_agent: str | None = None) -> tuple[bool, str]:
+    def _run_turn(
+        self, user_msg: str, force_agent: str | None = None
+    ) -> tuple[bool, str]:
         """
         Route user_msg, run the agent to completion.
         Returns (steered, response_for_history).
@@ -296,7 +306,9 @@ class Session:
         # Inject only the cross-agent history this agent hasn't seen yet.
         # Its own prior turns are already in its LangGraph thread (tool calls included).
         offset = self._agent_history_offset.get(agent_name, 0)
-        messages = [{"role": m["role"], "content": m["content"]} for m in self._history[offset:]]
+        messages = [
+            {"role": m["role"], "content": m["content"]} for m in self._history[offset:]
+        ]
         messages.append({"role": "user", "content": user_msg})
         current_input: dict | Command = {"messages": messages}
         response_parts: list[str] = []
@@ -315,7 +327,9 @@ class Session:
 
             return False, f"[{agent_name}]: {''.join(response_parts)}"
 
-    def _setup_turn(self, user_msg: str, force_agent: str | None = None) -> tuple[str, object, dict]:
+    def _setup_turn(
+        self, user_msg: str, force_agent: str | None = None
+    ) -> tuple[str, object, dict]:
         """Route, show agent header, return (name, agent, langgraph_config)."""
         if force_agent:
             name = force_agent
@@ -352,8 +366,10 @@ class Session:
         def _producer() -> None:
             try:
                 for item in agent.stream(
-                    current_input, config=config,
-                    stream_mode=["messages", "updates"], subgraphs=True,
+                    current_input,
+                    config=config,
+                    stream_mode=["messages", "updates"],
+                    subgraphs=True,
                 ):
                     chunk_q.put(("chunk", item))
             except Exception as exc:
@@ -481,7 +497,8 @@ class Session:
                         raw = block.get("summary") or block.get("reasoning") or ""
                         if isinstance(raw, list):
                             text = " ".join(
-                                item.get("text", "") for item in raw
+                                item.get("text", "")
+                                for item in raw
                                 if isinstance(item, dict)
                             )
                         else:
@@ -547,15 +564,11 @@ class Session:
                     self._io.write(f"[routing → {name} (fuzzy: {raw!r})]", style="dim")
                     return name
             fallback = self._last_agent or self.DEFAULT_AGENT
-            self._io.write(
-                f"[routing → {fallback} (no match: {raw!r})]", style="dim"
-            )
+            self._io.write(f"[routing → {fallback} (no match: {raw!r})]", style="dim")
             return fallback
         except Exception as e:
             fallback = self._last_agent or self.DEFAULT_AGENT
-            self._io.write(
-                f"[routing → {fallback} (error: {e})]", style="dim"
-            )
+            self._io.write(f"[routing → {fallback} (error: {e})]", style="dim")
         return self._last_agent or self.DEFAULT_AGENT
 
     def _router_prompt(self) -> str:

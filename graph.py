@@ -200,9 +200,7 @@ _default_model = init_chat_model(
 def _identity_section(name: str, all_agents: dict) -> str:
     """Build a system-prompt preamble that tells the agent who it is."""
     others = "\n".join(
-        f"  - {n}: {cfg['description']}"
-        for n, cfg in all_agents.items()
-        if n != name
+        f"  - {n}: {cfg['description']}" for n, cfg in all_agents.items() if n != name
     )
     return (
         f"## Identity\n"
@@ -216,7 +214,9 @@ def _identity_section(name: str, all_agents: dict) -> str:
     )
 
 
-def make_agent(model=None, checkpointer=None, name: str | None = None, agents: dict | None = None):
+def make_agent(
+    model=None, checkpointer=None, name: str | None = None, agents: dict | None = None
+):
     identity = _identity_section(name, agents) if name and agents else ""
     return create_deep_agent(
         model=model or _default_model,
