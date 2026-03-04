@@ -35,6 +35,19 @@ class _InputArea(TextArea):
             super().__init__()
             self.value = value
 
+    async def _on_paste(self, event: events.Paste) -> None:
+        """Insert pasted text (including newlines) without triggering submit.
+
+        prevent_default() stops MRO traversal so TextArea._on_paste doesn't
+        double-insert (same mechanism documented below for _on_key/enter).
+        """
+        event.prevent_default()
+        if not self.read_only:
+            start, end = self.selection
+            result = self.replace(event.text, start, end, maintain_selection_offset=False)
+            if result:
+                self.move_cursor(result.end_location)
+
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "enter":
             event.prevent_default()
