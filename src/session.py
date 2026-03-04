@@ -153,61 +153,56 @@ class Session:
         "gpt": {
             "model_id": "openai:gpt-5.2",
             "reasoning": {"effort": "medium", "summary": "auto"},
-            "description": "OpenAI GPT — strong general reasoning",
+            "description": "OpenAI GPT-5.2",
         },
         "gpt-pro": {
             "model_id": "openai:gpt-5.2-pro",
             "reasoning": {"effort": "high", "summary": "auto"},
-            "description": "OpenAI GPT — Version of GPT-5.2 that produces smarter and more precise responses.",
+            "description": "OpenAI GPT-5.2 Pro — higher reasoning effort",
         },
         "gpt-mini": {
             "model_id": "openai:gpt-5-mini",
             "reasoning": {"effort": "medium", "summary": "auto"},
-            "description": "OpenAI GPT — GPT-5 mini is a faster, more cost-efficient version of GPT-5. It's great for well-defined tasks and precise prompts.",
+            "description": "OpenAI GPT-5 mini — faster, more cost-efficient",
         },
         "deepseek": {
             "model_id": "deepseek-chat",
-            "description": "DeepSeek chat — good for code, concise answers",
+            "description": "DeepSeek chat",
         },
-        # Enable once exposed:
-        # "deepseek-v3": {
-        #     "model_id": "deepseek:deepseek-v3.2-speciale",
-        #     "description": "DeepSeek v3 special — alternative capable model",
-        # },
-        "gemini-flash-mini": {
+        "flash-mini": {
             "model_id": "google_genai:gemini-3-flash-preview",
             "include_thoughts": True,
             "thinking_level": "minimal",
-            "description": "Gemini Flash — fast and cheap for simple queries. Thinking level: none",
+            "description": "Gemini Flash — minimal thinking",
         },
-        "gemini-flash": {
+        "flash": {
             "model_id": "google_genai:gemini-3-flash-preview",
             "include_thoughts": True,
             "thinking_level": "medium",
-            "description": "Gemini Flash — fast and cheap for simple queries",
+            "description": "Gemini Flash — medium thinking",
         },
-        "gemini-pro": {
+        "gemini": {
             "model_id": "google_genai:gemini-3.1-pro-preview",
             "include_thoughts": True,
             "thinking_level": "high",
             "max_retries": 6,
-            "description": "Gemini Pro — thorough analysis",
+            "description": "Gemini Pro",
         },
-        "claude-haiku": {
+        "haiku": {
             "model_id": "anthropic:claude-haiku-4-5-20251001",
-            "description": "The fastest model with near-frontier intelligence",
+            "description": "Claude Haiku — fastest",
         },
-        "claude-sonnet": {
+        "sonnet": {
             "model_id": "anthropic:claude-sonnet-4-6",
-            "description": "Claude Sonnet — very strong for code and nuance",
+            "description": "Claude Sonnet",
         },
-        "claude-opus": {
+        "opus": {
             "model_id": "anthropic:claude-opus-4-6",
-            "description": "Claude Opus — most powerful Claude model",
+            "description": "Claude Opus",
         },
     }
-    DEFAULT_AGENT = "gemini-flash"
-    ROUTER_AGENT_NAME = "gemini-flash-mini"
+    DEFAULT_AGENT = "flash"
+    ROUTER_AGENT_NAME = "flash-mini"
 
     # Keys in AGENTS entries that are not forwarded to init_chat_model.
     _METADATA_KEYS = frozenset({"model_id", "description"})
@@ -217,11 +212,8 @@ class Session:
         self._prompt = prompt
 
         self._agents = self._build_agents()
-        # The router should be a raw model, not a deep agent, for speed and simplicity.
         router_cfg = self.AGENTS[self.ROUTER_AGENT_NAME]
-        router_kwargs = {
-            k: v for k, v in router_cfg.items() if k not in self._METADATA_KEYS
-        }
+        router_kwargs = {k: v for k, v in router_cfg.items() if k not in self._METADATA_KEYS}
         self._router = init_chat_model(router_cfg["model_id"], **router_kwargs)
         self._history: list[dict] = []
         self._last_agent: str | None = None
@@ -569,15 +561,12 @@ class Session:
     # ── routing ──────────────────────────────────────────────────────────────
 
     def _route(self, query: str) -> str:
-        """
-        Pick the best agent for this query.
-        Explicit name mention wins over the router LLM.
-        """
+        """Switch agent only if one is mentioned by name; otherwise stay put."""
         q = query.lower()
-        # Sort longest-first so "deepseek-r" is matched before "deepseek".
+        # Fast path: exact name substring match (longest first to avoid prefix collisions).
         for name in sorted(self._agents, key=len, reverse=True):
             if name in q:
-                self._io.write(f"[routing → {name} (explicit)]", style="dim")
+                self._io.write(f"[routing → {name}]", style="dim")
                 return name
 
         try:
@@ -590,45 +579,30 @@ class Session:
             content = resp.content
             if isinstance(content, list):
                 content = " ".join(
-                    b.get("text", "")
-                    for b in content
+                    b.get("text", "") for b in content
                     if isinstance(b, dict) and b.get("type") == "text"
                 )
-            raw = content.strip()
-            normalized = raw.lower()
-            # "?" means the router is uncertain → stay on the last active agent.
-            if normalized == "?":
-                fallback = self._last_agent or self.DEFAULT_AGENT
-                self._io.write(f"[routing → {fallback} (continuing)]", style="dim")
-                return fallback
-            if normalized in self.AGENTS:
-                self._io.write(f"[routing → {normalized}]", style="dim")
-                return normalized
-            # Fuzzy fallback: first agent name contained in the response.
-            for name in sorted(self._agents, key=len, reverse=True):
-                if name in normalized:
-                    self._io.write(f"[routing → {name} (fuzzy: {raw!r})]", style="dim")
-                    return name
-            fallback = self._last_agent or self.DEFAULT_AGENT
-            self._io.write(f"[routing → {fallback} (no match: {raw!r})]", style="dim")
-            return fallback
+            name = content.strip().lower()
+            if name in self._agents:
+                self._io.write(f"[routing → {name}]", style="dim")
+                return name
         except Exception as e:
-            fallback = self._last_agent or self.DEFAULT_AGENT
-            self._io.write(f"[routing → {fallback} (error: {e})]", style="dim")
-        return self._last_agent or self.DEFAULT_AGENT
+            self._io.write(f"[routing error: {e}]", style="dim")
+
+        fallback = self._last_agent or self.DEFAULT_AGENT
+        return fallback
 
     def _router_prompt(self) -> str:
-        agent_list = ", ".join(self._agents)
-        descriptions = "\n".join(
-            f"- {name}: {self.AGENTS[name]['description']}" for name in self._agents
-        )
+        names = ", ".join(self._agents)
         return (
-            f"Route the user query to one of these agents: {agent_list}.\n"
-            f"{descriptions}\n"
-            f"Reply with ONLY the agent name.\n"
-            f"Reply with exactly '?' if the query is a continuation or follow-up with no "
-            f"clear agent preference (e.g. 'continue', 'go on', 'ok', 'yes', bare questions "
-            f"that build on prior context). When in doubt, prefer '?'."
+            f"Available agents: {names}.\n\n"
+            f"Does the message explicitly reference one of these agents by name "
+            f"(including informal variants, e.g. 'use claude', 'switch to gemini', "
+            f"'ask opus', 'let flash handle this')?\n\n"
+            f"If yes, reply with ONLY that agent name.\n"
+            f"If no agent is mentioned by name, reply with ONLY '?'.\n"
+            f"Do NOT route based on topic or what the agent is good at — only on "
+            f"whether an agent is explicitly named."
         )
 
     # ── interrupt handling ───────────────────────────────────────────────────
