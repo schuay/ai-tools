@@ -220,7 +220,9 @@ class Session:
 
         self._agents = self._build_agents()
         router_cfg = self.AGENTS[self.ROUTER_AGENT_NAME]
-        router_kwargs = {k: v for k, v in router_cfg.items() if k not in self._METADATA_KEYS}
+        router_kwargs = {
+            k: v for k, v in router_cfg.items() if k not in self._METADATA_KEYS
+        }
         self._router = init_chat_model(router_cfg["model_id"], **router_kwargs)
         self._history: list[dict] = []
         self._last_agent: str | None = None
@@ -370,7 +372,9 @@ class Session:
 
             return MultiServerMCPClient(config), list(config.keys())
         except ImportError:
-            self._io.write("[mcp] langchain-mcp-adapters not installed", style="bold red")
+            self._io.write(
+                "[mcp] langchain-mcp-adapters not installed", style="bold red"
+            )
             return None, []
         except Exception as e:
             self._io.write(f"[mcp] failed to init client: {e}", style="bold red")
@@ -555,6 +559,7 @@ class Session:
                 finally:
                     chunk_q.put(("done", None))
         else:
+
             def _producer() -> None:
                 try:
                     for item in agent.stream(
@@ -733,7 +738,8 @@ class Session:
             content = resp.content
             if isinstance(content, list):
                 content = " ".join(
-                    b.get("text", "") for b in content
+                    b.get("text", "")
+                    for b in content
                     if isinstance(b, dict) and b.get("type") == "text"
                 )
             name = content.strip().lower()

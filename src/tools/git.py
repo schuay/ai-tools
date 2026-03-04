@@ -10,7 +10,9 @@ REPO_ROOT = os.getcwd()
 
 
 def _git(args: list[str]) -> str:
-    r = subprocess.run(args, cwd=REPO_ROOT, capture_output=True, text=True, errors="replace")
+    r = subprocess.run(
+        args, cwd=REPO_ROOT, capture_output=True, text=True, errors="replace"
+    )
     return r.stdout if r.returncode == 0 else f"Error: {r.stderr.strip()}"
 
 
@@ -31,9 +33,12 @@ def trim_to_context(full_text: str, line: int | None, context: int = 20) -> str:
 
 def in_git_repo() -> bool:
     """Return True if the current working directory is inside a git repository."""
-    return subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"], capture_output=True
-    ).returncode == 0
+    return (
+        subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"], capture_output=True
+        ).returncode
+        == 0
+    )
 
 
 # ── tools ─────────────────────────────────────────────────────────────────────
@@ -52,7 +57,10 @@ def git_show(commit_hash: str, line: int | None = None, context: int = 200) -> s
         return trim_to_context(out, line, context)
     lines = out.splitlines(keepends=True)
     if len(lines) > context:
-        return "".join(lines[:context]) + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
+        return (
+            "".join(lines[:context])
+            + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
+        )
     return out
 
 

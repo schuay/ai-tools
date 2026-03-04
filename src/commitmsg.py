@@ -54,7 +54,8 @@ def _extract_text(content: object) -> str:
         return content
     if isinstance(content, list):
         return "".join(
-            b.get("text", "") for b in content
+            b.get("text", "")
+            for b in content
             if isinstance(b, dict) and b.get("type") == "text"
         )
     return str(content)
