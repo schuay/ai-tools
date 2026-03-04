@@ -28,3 +28,4 @@ commitmsg = "commitmsg:main"
 
 [tool.setuptools]
 py-modules = ["cli", "commitmsg", "graph", "qq", "session"]
+packages = ["tools"]
