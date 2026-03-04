@@ -1,5 +1,4 @@
-from tools.edit import file_edit
-from tools.fs import list_dir, write_file
+from tools.fs import edit_file, list_dir, write_file
 from tools.git import (
     REPO_ROOT,
     git_blame,
@@ -14,7 +13,7 @@ from tools.web import web_fetch, web_search
 
 __all__ = [
     "REPO_ROOT",
-    "file_edit",
+    "edit_file",
     "git_blame",
     "git_log",
     "git_show",

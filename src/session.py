@@ -56,7 +56,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from graph import make_agent
-from tools.edit import preview_diff, preview_write
+from tools.fs import preview_diff, preview_write
 
 
 # ── IO protocol ──────────────────────────────────────────────────────────────
@@ -310,7 +310,7 @@ class Session:
 
     # Tools that require explicit user approval before execution.
     INTERRUPT_ON: dict[str, bool] = {
-        "file_edit": True,
+        "edit_file": True,
         "write_file": True,
     }
 
@@ -662,7 +662,7 @@ class Session:
         opts = "/".join(allowed)
 
         self._io.write(f"[approve?] tool={name}", style="bold yellow")
-        if name == "file_edit":
+        if name == "edit_file":
             self._show_diff(preview_diff(args["path"], args["search"], args["replace"]))
         elif name == "write_file":
             self._show_diff(preview_write(args["path"], args["content"]))

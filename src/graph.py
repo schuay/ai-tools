@@ -19,7 +19,7 @@ from deepagents.middleware.summarization import (
 
 from tools import (
     REPO_ROOT,
-    file_edit,
+    edit_file,
     git_blame,
     git_log,
     git_show,
@@ -96,7 +96,7 @@ on correctness or safety.
 
 ## Making changes
 
-You can propose edits to files using the file_edit tool. Always read the
+You can propose edits to files using the edit_file tool. Always read the
 target region first (read_around or git_show_file) and copy the search block
 verbatim — include 3-5 lines of unchanged context on each side to uniquely
 anchor the location. The user will review a diff and approve or reject before
@@ -160,7 +160,7 @@ def make_agent(
 ):
     model = model or _default_model
     identity = _identity_section(name, agents) if name and agents else ""
-    tools = [git_show, git_show_file, git_blame, git_log, read_around, list_dir, file_edit, write_file, ask_user]
+    tools = [git_show, git_show_file, git_blame, git_log, read_around, list_dir, edit_file, write_file, ask_user]
     if os.environ.get("TAVILY_API_KEY"):
         tools = [web_search, web_fetch] + tools
 
