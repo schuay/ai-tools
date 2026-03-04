@@ -309,7 +309,6 @@ class Session:
     # ── agent construction ───────────────────────────────────────────────────
 
     # Tools that require explicit user approval before execution.
-    # Covers both our custom file_edit and the deepagents built-in write tools.
     INTERRUPT_ON: dict[str, bool] = {
         "file_edit": True,
     }
