@@ -167,6 +167,11 @@ class Session:
             "reasoning": {"effort": "medium", "summary": "auto"},
             "description": "OpenAI GPT-5 mini — faster, more cost-efficient",
         },
+        "nano": {
+            "model_id": "openai:gpt-5-nano",
+            "reasoning": {"effort": "low", "summary": "auto"},
+            "description": "OpenAI GPT-5 nano",
+        },
         "seek": {
             "model_id": "deepseek-chat",
             "description": "DeepSeek chat",
@@ -204,7 +209,7 @@ class Session:
         },
     }
     DEFAULT_AGENT = "flash"
-    ROUTER_AGENT_NAME = "lite"
+    ROUTER_AGENT_NAME = "nano"
 
     # Keys in AGENTS entries that are not forwarded to init_chat_model.
     _METADATA_KEYS = frozenset({"model_id", "description"})
