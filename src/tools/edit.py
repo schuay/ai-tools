@@ -70,8 +70,20 @@ def _find(content: str, search: str) -> tuple[int, int] | None:
     return None
 
 
+def _unified_diff(original: str, modified: str, name: str) -> str:
+    return "".join(
+        difflib.unified_diff(
+            original.splitlines(keepends=True),
+            modified.splitlines(keepends=True),
+            fromfile=f"a/{name}",
+            tofile=f"b/{name}",
+            n=3,
+        )
+    )
+
+
 def preview_diff(path: str, search: str, replace: str) -> str:
-    """Return a unified diff string for the proposed edit, or an error message."""
+    """Unified diff for a fuzzy search-and-replace (file_edit / edit_file args)."""
     file_path = Path(path).expanduser()
     if not file_path.exists():
         return f"Error: {path} does not exist"
@@ -89,16 +101,14 @@ def preview_diff(path: str, search: str, replace: str) -> str:
         )
 
     start, end = match
-    modified = original[:start] + replace + original[end:]
-    return "".join(
-        difflib.unified_diff(
-            original.splitlines(keepends=True),
-            modified.splitlines(keepends=True),
-            fromfile=f"a/{file_path.name}",
-            tofile=f"b/{file_path.name}",
-            n=3,
-        )
-    )
+    return _unified_diff(original, original[:start] + replace + original[end:], file_path.name)
+
+
+def write_diff(path: str, content: str) -> str:
+    """Unified diff for creating or overwriting a file (write_file args)."""
+    file_path = Path(path).expanduser()
+    original = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
+    return _unified_diff(original, content, file_path.name)
 
 
 # ── tool ─────────────────────────────────────────────────────────────────────

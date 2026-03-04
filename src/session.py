@@ -56,7 +56,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from graph import make_agent
-from tools import preview_diff
+from tools import preview_diff, write_diff
 
 
 # ── IO protocol ──────────────────────────────────────────────────────────────
@@ -309,7 +309,12 @@ class Session:
     # ── agent construction ───────────────────────────────────────────────────
 
     # Tools that require explicit user approval before execution.
-    INTERRUPT_ON: dict[str, bool] = {"file_edit": True}
+    # Covers both our custom file_edit and the deepagents built-in write tools.
+    INTERRUPT_ON: dict[str, bool] = {
+        "file_edit": True,
+        "edit_file": True,
+        "write_file": True,
+    }
 
     def _build_agent(self, name, cfg, all_agents: dict) -> object:
         kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
@@ -644,6 +649,15 @@ class Session:
         self._wait_input("Press Enter to continue… ")
         return Command(resume=None)
 
+    def _show_diff(self, diff: str) -> None:
+        for line in diff.splitlines():
+            if line.startswith("+"):
+                self._io.write(line, style="green")
+            elif line.startswith("-"):
+                self._io.write(line, style="red")
+            else:
+                self._io.write(line, style="dim")
+
     def _handle_hitl_action(self, action_req: dict, review_cfg: dict) -> dict:
         name, args = action_req["name"], action_req["args"]
         allowed = review_cfg["allowed_decisions"]
@@ -651,14 +665,11 @@ class Session:
 
         self._io.write(f"[approve?] tool={name}", style="bold yellow")
         if name == "file_edit":
-            diff = preview_diff(args["path"], args["search"], args["replace"])
-            for line in diff.splitlines():
-                if line.startswith("+"):
-                    self._io.write(line, style="green")
-                elif line.startswith("-"):
-                    self._io.write(line, style="red")
-                else:
-                    self._io.write(line, style="dim")
+            self._show_diff(preview_diff(args["path"], args["search"], args["replace"]))
+        elif name == "edit_file":
+            self._show_diff(preview_diff(args["file_path"], args["old_string"], args["new_string"]))
+        elif name == "write_file":
+            self._show_diff(write_diff(args["file_path"], args["content"]))
         else:
             self._io.write(json.dumps(args, indent=2), style="dim")
 

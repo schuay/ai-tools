@@ -1,4 +1,4 @@
-from tools.edit import file_edit, preview_diff
+from tools.edit import file_edit, preview_diff, write_diff
 from tools.git import (
     REPO_ROOT,
     git_blame,
@@ -15,6 +15,7 @@ __all__ = [
     "REPO_ROOT",
     "file_edit",
     "preview_diff",
+    "write_diff",
     "git_blame",
     "git_log",
     "git_show",
