@@ -6,7 +6,6 @@ Implements the SessionIO protocol so the Session can write output and set
 the input placeholder from its worker thread.
 """
 
-import subprocess
 import sys
 from threading import Thread
 
@@ -18,23 +17,6 @@ from textual.message import Message
 from textual.widgets import RichLog, TextArea
 
 from session import Session
-
-
-def _system_clipboard() -> str:
-    """Read text from the system clipboard. Returns '' on failure."""
-    for cmd in (
-        ["wl-paste", "--no-newline"],          # Wayland
-        ["xclip", "-selection", "clipboard", "-o"],  # X11
-        ["xsel", "--clipboard", "--output"],   # X11 fallback
-        ["pbpaste"],                            # macOS
-    ):
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1)
-            if r.returncode == 0:
-                return r.stdout
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            continue
-    return ""
 
 
 class _InputArea(TextArea):
@@ -82,12 +64,7 @@ class _InputArea(TextArea):
         await super()._on_key(event)
 
     def action_paste(self) -> None:
-        """Paste from system clipboard (overrides Textual's internal-only clipboard)."""
-        text = _system_clipboard()
-        if text:
-            self.insert(text)
-        elif self.app.clipboard:
-            self.insert(self.app.clipboard)
+        """No-op: let the terminal deliver paste content via bracketed paste."""
 
     def on_text_area_changed(self, _: TextArea.Changed) -> None:
         # +2 for the top and bottom border rows (border: tall)
