@@ -253,6 +253,11 @@ class Session:
 
     def run(self) -> None:
         """Main loop. Blocks; run on a dedicated worker thread."""
+        for name, agent_cfg in self.AGENTS.items():
+            if name not in self._agents:
+                continue
+            marker = " (default)" if name == self.DEFAULT_AGENT else ""
+            self._io.write(f"  {name}: {agent_cfg['description']}{marker}", style="dim")
         user_msg = self._prompt or self._wait_input("> ")
         force_agent: str | None = None
         try:
