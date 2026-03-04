@@ -76,7 +76,7 @@ class _LoggingIO:
 
     def __init__(self, inner: SessionIO) -> None:
         self._inner = inner
-        _LOG_DIR.mkdir(exist_ok=True)
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._f = (_LOG_DIR / f"{ts}.log").open("w", buffering=1, encoding="utf-8")
 
@@ -258,7 +258,7 @@ class Session:
 
     def run(self) -> None:
         """Main loop. Blocks; run on a dedicated worker thread."""
-        user_msg = self._prompt
+        user_msg = self._prompt or self._wait_input("> ")
         force_agent: str | None = None
         try:
             while True:

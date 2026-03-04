@@ -104,7 +104,8 @@ class AgentApp(App):
     def on_mount(self) -> None:
         self._session = Session(io=self, prompt=self._prompt)
         self.query_one(_InputArea).focus()
-        self._append(f"> {self._prompt}", style="bold green")
+        if self._prompt:
+            self._append(f"> {self._prompt}", style="bold green")
         Thread(target=self._session.run, daemon=True).start()
 
     def on_unmount(self) -> None:
@@ -188,9 +189,6 @@ class AgentApp(App):
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage: agent <prompt>", file=sys.stderr)
-        sys.exit(1)
     AgentApp(" ".join(sys.argv[1:])).run()
 
 
