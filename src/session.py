@@ -56,6 +56,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from graph import make_agent
+from tools import preview_diff
 
 
 # ── IO protocol ──────────────────────────────────────────────────────────────
@@ -645,7 +646,17 @@ class Session:
         opts = "/".join(allowed)
 
         self._io.write(f"[approve?] tool={name}", style="bold yellow")
-        self._io.write(json.dumps(args, indent=2), style="dim")
+        if name == "file_edit":
+            diff = preview_diff(args["path"], args["search"], args["replace"])
+            for line in diff.splitlines():
+                if line.startswith("+"):
+                    self._io.write(line, style="green")
+                elif line.startswith("-"):
+                    self._io.write(line, style="red")
+                else:
+                    self._io.write(line, style="dim")
+        else:
+            self._io.write(json.dumps(args, indent=2), style="dim")
 
         while True:
             choice = self._wait_input(f"[{opts}]> ").lower()

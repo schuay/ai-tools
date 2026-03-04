@@ -12,14 +12,13 @@ Matching is attempted in three passes (cheapest first):
   2. Strip trailing whitespace from every line, then exact match.
   3. Sliding-window SequenceMatcher over line groups (threshold ≥ 0.85).
 
-The tool always calls interrupt() before touching the file so the user can
-inspect the unified diff and approve or reject the change.
+User approval is handled by deepagents' interrupt_on mechanism: the agent is
+configured with interrupt_on={"file_edit": True}, so execution pauses before
+this function is ever called and the user can approve or reject.
 """
 
 import difflib
 from pathlib import Path
-
-from langgraph.types import interrupt
 
 
 # ── fuzzy matching ────────────────────────────────────────────────────────────
@@ -71,6 +70,37 @@ def _find(content: str, search: str) -> tuple[int, int] | None:
     return None
 
 
+def preview_diff(path: str, search: str, replace: str) -> str:
+    """Return a unified diff string for the proposed edit, or an error message."""
+    file_path = Path(path).expanduser()
+    if not file_path.exists():
+        return f"Error: {path} does not exist"
+    try:
+        original = file_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return f"Error reading {path}: {e}"
+
+    match = _find(original, search)
+    if match is None:
+        return (
+            f"Error: could not locate the search block in {path}.\n"
+            "Tips: ensure indentation is exact, add more surrounding context lines,\n"
+            "or verify the text against the actual file with read_around / git_show_file."
+        )
+
+    start, end = match
+    modified = original[:start] + replace + original[end:]
+    return "".join(
+        difflib.unified_diff(
+            original.splitlines(keepends=True),
+            modified.splitlines(keepends=True),
+            fromfile=f"a/{file_path.name}",
+            tofile=f"b/{file_path.name}",
+            n=3,
+        )
+    )
+
+
 # ── tool ─────────────────────────────────────────────────────────────────────
 
 
@@ -78,8 +108,8 @@ def file_edit(path: str, search: str, replace: str) -> str:
     """Edit a file by finding and replacing a specific block of code.
 
     Locates *search* in the file using fuzzy matching (handles minor whitespace
-    differences), shows the resulting diff to the user, and applies the change
-    only after explicit approval.
+    differences) and writes the result. The user is asked to approve or reject
+    before this tool runs (configured via interrupt_on in the agent).
 
     Guidance for writing a good search block:
     - Include 3-5 lines of unchanged surrounding context so the location is
@@ -112,23 +142,8 @@ def file_edit(path: str, search: str, replace: str) -> str:
     start, end = match
     modified = original[:start] + replace + original[end:]
 
-    diff = "".join(
-        difflib.unified_diff(
-            original.splitlines(keepends=True),
-            modified.splitlines(keepends=True),
-            fromfile=f"a/{file_path.name}",
-            tofile=f"b/{file_path.name}",
-            n=3,
-        )
-    )
-
-    decision = interrupt({"file_edit": {"path": str(file_path.resolve()), "diff": diff}})
-
-    if str(decision).strip().lower() in ("approve", "a", "y", "yes"):
-        try:
-            file_path.write_text(modified, encoding="utf-8")
-            return f"Applied edit to {file_path}"
-        except Exception as e:
-            return f"Error writing {file_path}: {e}"
-
-    return "Edit rejected."
+    try:
+        file_path.write_text(modified, encoding="utf-8")
+        return f"Applied edit to {file_path}"
+    except Exception as e:
+        return f"Error writing {file_path}: {e}"

@@ -1,3 +1,4 @@
+from tools.edit import file_edit, preview_diff
 from tools.git import (
     REPO_ROOT,
     git_blame,
@@ -12,6 +13,8 @@ from tools.web import web_fetch, web_search
 
 __all__ = [
     "REPO_ROOT",
+    "file_edit",
+    "preview_diff",
     "git_blame",
     "git_log",
     "git_show",

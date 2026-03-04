@@ -10,10 +10,12 @@ from deepagents.backends import FilesystemBackend
 
 from tools import (
     REPO_ROOT,
+    file_edit,
     git_blame,
     git_log,
     git_show,
     git_show_file,
+    preview_diff,
     read_around,
     web_fetch,
     web_search,
@@ -135,7 +137,7 @@ def make_agent(
     model=None, checkpointer=None, name: str | None = None, agents: dict | None = None
 ):
     identity = _identity_section(name, agents) if name and agents else ""
-    tools = [git_show, git_show_file, git_blame, git_log, read_around, ask_user]
+    tools = [git_show, git_show_file, git_blame, git_log, read_around, file_edit, ask_user]
     if os.environ.get("TAVILY_API_KEY"):
         tools = [web_search, web_fetch] + tools
 
@@ -145,6 +147,7 @@ def make_agent(
         backend=FilesystemBackend(root_dir=REPO_ROOT, virtual_mode=True),
         system_prompt=identity + v8_instructions,
         checkpointer=checkpointer,
+        interrupt_on={"file_edit": True},
     )
 
 
