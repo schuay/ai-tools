@@ -262,7 +262,10 @@ class Session:
             self._io.write(f"  {name}: {agent_cfg['description']}{marker}", style="dim")
         if self._mcp_server_names:
             self._io.write(f"  mcp: {', '.join(self._mcp_server_names)}", style="dim")
-        user_msg = self._prompt or self._wait_input("> ")
+        try:
+            user_msg = self._prompt or self._wait_input("> ")
+        except _Stopped:
+            return
         force_agent: str | None = None
         try:
             while True:
