@@ -11,17 +11,15 @@ Flags:
     -e    Echo stdin to stdout before the answer (useful in pipelines).
 """
 
-import os
 import re
-import subprocess
 import sys
 from argparse import ArgumentParser
 
-import httpx
-import trafilatura
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from tavily import TavilyClient
+
+from tools import git_blame, git_log, git_show, git_show_file, read_around, web_fetch, web_search
+from tools.git import in_git_repo
 
 # ── model ─────────────────────────────────────────────────────────────────────
 
@@ -50,143 +48,8 @@ Use tools only when you cannot answer confidently from your own knowledge:
 - Do not call tools for facts you already know.\
 """
 
-# ── tools ─────────────────────────────────────────────────────────────────────
-
-_REPO_ROOT = os.getcwd()
-
-
-def _trim(full_text: str, line: int | None, context: int = 20) -> str:
-    if line is None:
-        return full_text
-    lines = full_text.splitlines(keepends=True)
-    start = max(0, line - 1 - context)
-    end = min(len(lines), line - 1 + context + 1)
-    return "".join(
-        f"{i + 1:>6}  {'>>>' if i + 1 == line else '   '}  {lines[i]}"
-        for i in range(start, end)
-    )
-
-
-def _git(args: list[str]) -> str:
-    r = subprocess.run(args, cwd=_REPO_ROOT, capture_output=True, text=True)
-    return r.stdout if r.returncode == 0 else f"Error: {r.stderr.strip()}"
-
-
-def git_show(commit_hash: str) -> str:
-    """Show the diff and metadata for a git commit in the repository."""
-    return _git(["git", "show", commit_hash])
-
-
-def git_show_file(commit_hash: str, file_path: str, line: int | None = None, context: int = 20) -> str:
-    """Show a file as it existed at a given commit.
-
-    commit_hash: the git commit hash
-    file_path: path relative to the repo root
-    line: if given, centre the output on this 1-based line number
-    context: lines to show before and after line (default 20)
-    """
-    out = _git(["git", "show", f"{commit_hash}:{file_path}"])
-    return _trim(out, line, context) if not out.startswith("Error:") else out
-
-
-def git_blame(file_path: str, commit_hash: str | None = None, line: int | None = None, context: int = 20) -> str:
-    """Show git blame for a file in the repository.
-
-    file_path: path relative to the repo root
-    commit_hash: if given, show blame as of that commit; defaults to HEAD
-    line: if given, centre on this 1-based line number
-    context: lines to show before and after line (default 20)
-    """
-    cmd = ["git", "blame", "--date=short"]
-    if commit_hash:
-        cmd.append(commit_hash)
-    cmd.append(file_path)
-    out = _git(cmd)
-    return _trim(out, line, context) if not out.startswith("Error:") else out
-
-
-def git_log(limit: int = 10, oneline: bool = False, grep: str | None = None, author: str | None = None) -> str:
-    """Show git commit log.
-
-    limit: max commits to show (default 10)
-    oneline: one line per commit if true
-    grep: filter by commit message pattern
-    author: filter by author
-    """
-    cmd = ["git", "log", f"-n{limit}"]
-    if oneline:
-        cmd.append("--oneline")
-    if grep:
-        cmd.append(f"--grep={grep}")
-    if author:
-        cmd.append(f"--author={author}")
-    return _git(cmd)
-
-
-def read_around(file_path: str, line: int, context: int = 20) -> str:
-    """Read lines around a given line number in a file in the repository.
-
-    file_path: path relative to the repo root
-    line: 1-based line number to centre on
-    context: number of lines to show before and after
-    """
-    full_path = os.path.join(_REPO_ROOT, file_path)
-    try:
-        with open(full_path, errors="replace") as f:
-            return _trim(f.read(), line, context)
-    except OSError as e:
-        return f"Error reading {full_path}: {e}"
-
-
-def web_search(query: str, max_results: int = 5) -> str:
-    """Search the web for real-time information or technical documentation.
-
-    query: the search query
-    max_results: maximum number of results to return (default 5)
-    """
-    api_key = os.environ.get("TAVILY_API_KEY")
-    if not api_key:
-        return "Error: TAVILY_API_KEY not set."
-    try:
-        results = TavilyClient(api_key=api_key).search(
-            query=query, search_depth="basic", max_results=max_results
-        ).get("results", [])
-        return "\n".join(
-            f"Title: {r['title']}\nURL: {r['url']}\nSnippet: {r['content']}\n---"
-            for r in results
-        ) or "No results found."
-    except Exception as e:
-        return f"Error: {e}"
-
-
-def web_fetch(url: str) -> str:
-    """Fetch and extract the main text content from a URL.
-
-    url: the full URL to fetch
-    """
-    try:
-        with httpx.Client(follow_redirects=True, timeout=15.0) as client:
-            content = trafilatura.extract(
-                client.get(url).raise_for_status().text,
-                include_links=True,
-                include_comments=False,
-            )
-        if not content:
-            return "Error: could not extract content."
-        return content[:30000] + "\n…(truncated)" if len(content) > 30000 else content
-    except httpx.HTTPStatusError as e:
-        return f"HTTP {e.response.status_code} fetching {url}"
-    except Exception as e:
-        return f"Error: {e}"
-
 
 # ── core ──────────────────────────────────────────────────────────────────────
-
-
-def _in_git_repo() -> bool:
-    return subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"], capture_output=True
-    ).returncode == 0
 
 
 def _extract_text(content: object) -> str:
@@ -238,7 +101,7 @@ def _make_stdin_tools(data: str):
 
 def run(query: str, stdin_data: str) -> str:
     tools = [web_search, web_fetch]
-    if _in_git_repo():
+    if in_git_repo():
         tools = [git_show, git_show_file, git_blame, git_log, read_around] + tools
 
     human_content = query

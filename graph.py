@@ -1,215 +1,24 @@
 """Importable agent definition — used by both main.py (CLI) and langgraph dev (Studio)."""
 
-import os
-import subprocess
-
-import httpx
-import trafilatura
 from langchain.chat_models import init_chat_model
 from langgraph.types import interrupt
-from tavily import TavilyClient
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
 
-REPO_ROOT = os.getcwd()
+from tools import (
+    REPO_ROOT,
+    git_blame,
+    git_log,
+    git_show,
+    git_show_file,
+    read_around,
+    web_fetch,
+    web_search,
+)
 
 
-# ── tools ───────────────────────────────────────────────────────────────────
-
-
-def trim_to_context(full_text: str, line: int | None, context: int = 20):
-    if line is None:
-        return full_text
-
-    lines = full_text.splitlines(keepends=True)
-    start = max(0, line - 1 - context)
-    end = min(len(lines), line - 1 + context + 1)
-    return "".join(
-        f"{i + 1:>6}  {'>>>' if i + 1 == line else '   '}  {lines[i]}"
-        for i in range(start, end)
-    )
-
-
-def git_show(commit_hash: str) -> str:
-    """Show the diff and metadata for a git commit in the repository."""
-    result = subprocess.run(
-        ["git", "show", commit_hash],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return f"Error: {result.stderr.strip()}"
-    return result.stdout
-
-
-def read_around(file_path: str, line: int, context: int = 20) -> str:
-    """Read lines around a given line number in a file inside the repository.
-
-    file_path: path relative to the repo root
-    line: 1-based line number to centre on
-    context: number of lines to show before and after
-    """
-    full_path = os.path.join(REPO_ROOT, file_path)
-    try:
-        with open(full_path, "r", errors="replace") as f:
-            return trim_to_context(f.read(), line, context)
-    except OSError as e:
-        return f"Error reading {full_path}: {e}"
-
-
-def git_show_file(
-    commit_hash: str, file_path: str, line: int | None = None, context: int = 20
-) -> str:
-    """Show the content of a file as it existed at a given commit in the repository.
-
-    commit_hash: the git commit hash
-    file_path: path relative to the repo root
-    line: if given, centre the output on this 1-based line number and show `context` lines around it
-    context: lines to show before and after `line` (default 20); ignored when line is not given
-    """
-    result = subprocess.run(
-        ["git", "show", f"{commit_hash}:{file_path}"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return f"Error: {result.stderr.strip()}"
-
-    if line is None:
-        return result.stdout
-
-    return trim_to_context(result.stdout, line, context)
-
-
-def git_blame(
-    file_path: str,
-    commit_hash: str | None = None,
-    line: int | None = None,
-    context: int = 20,
-) -> str:
-    """Show git blame for a file in the repository.
-
-    file_path: path relative to the repo root
-    commit_hash: if given, show blame as of that commit; defaults to HEAD
-    line: if given, centre the output on this 1-based line number and show `context` lines around it
-    context: lines to show before and after `line` (default 20); ignored when line is not given
-    """
-    cmd = ["git", "blame", "--date=short"]
-    if commit_hash:
-        cmd.append(commit_hash)
-    cmd.append(file_path)
-
-    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
-    if result.returncode != 0:
-        return f"Error: {result.stderr.strip()}"
-
-    if line is None:
-        return result.stdout
-
-    return trim_to_context(result.stdout, line, context)
-
-
-def git_log(
-    limit: int = 10,
-    oneline: bool = False,
-    grep: str | None = None,
-    author: str | None = None,
-) -> str:
-    """Show the git commit logs in the repository.
-
-    Use this to find relevant commits by message content, author, or just to see recent history.
-
-    limit: The maximum number of commits to show (default 10).
-    oneline: If true, show each commit as a single line (hash and subject).
-    grep: If provided, only show commits with messages matching this pattern.
-    author: If provided, only show commits by this author.
-    """
-    cmd = ["git", "log", f"-n{limit}"]
-    if oneline:
-        cmd.append("--oneline")
-    if grep:
-        cmd.append(f"--grep={grep}")
-    if author:
-        cmd.append(f"--author={author}")
-
-    result = subprocess.run(
-        cmd,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return f"Error: {result.stderr.strip()}"
-    return result.stdout
-
-
-def web_search(query: str, max_results: int = 5) -> str:
-    """Search the web for real-time information, latest news, or technical documentation.
-
-    Use this tool when you need information that isn't in the local codebase,
-    such as external library documentation, recent V8 blog posts, or Chromium issue tracker details.
-
-    query: The search query string.
-    max_results: The maximum number of search results to return (default 5).
-    """
-    api_key = os.environ.get("TAVILY_API_KEY")
-    if not api_key:
-        return "Error: TAVILY_API_KEY environment variable is not set."
-
-    try:
-        client = TavilyClient(api_key=api_key)
-        response = client.search(
-            query=query, search_depth="basic", max_results=max_results
-        )
-
-        results = []
-        for res in response.get("results", []):
-            results.append(
-                f"Title: {res['title']}\nURL: {res['url']}\nSnippet: {res['content']}\n---"
-            )
-
-        return "\n".join(results) if results else "No results found."
-    except Exception as e:
-        return f"Error performing web search: {e}"
-
-
-def web_fetch(url: str) -> str:
-    """Fetch and extract the main text content from a specific URL.
-
-    Use this tool to read the full content of a webpage (like a blog post,
-    documentation page, or bug report) after finding a promising URL via web_search.
-    It automatically strips away navigation, ads, and boilerplate.
-
-    url: The full URL of the page to fetch.
-    """
-    try:
-        # Using a sync request for simplicity as the other tools are sync
-        with httpx.Client(follow_redirects=True, timeout=15.0) as client:
-            response = client.get(url)
-            response.raise_for_status()
-
-            # Extract content using trafilatura
-            content = trafilatura.extract(
-                response.text,
-                include_links=True,
-                include_comments=False,
-            )
-
-            if not content:
-                return "Error: Could not extract meaningful content from the page."
-
-            # Truncate if extremely long to avoid context window overflow
-            if len(content) > 30000:
-                content = content[:30000] + "\n... (content truncated for length)"
-
-            return content
-    except httpx.HTTPStatusError as e:
-        return f"HTTP Error fetching {url}: {e.response.status_code}"
-    except Exception as e:
-        return f"Error fetching {url}: {e}"
+# ── tools ────────────────────────────────────────────────────────────────────
 
 
 def ask_user(question: str) -> str:
