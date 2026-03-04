@@ -209,7 +209,7 @@ class Session:
         },
     }
     DEFAULT_AGENT = "flash"
-    ROUTER_AGENT_NAME = "nano"
+    ROUTER_AGENT_NAME = "lite"
 
     # Keys in AGENTS entries that are not forwarded to init_chat_model.
     _METADATA_KEYS = frozenset({"model_id", "description"})
