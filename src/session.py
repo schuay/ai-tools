@@ -83,14 +83,16 @@ class _LoggingIO:
 
     def write(self, text: str, style: str | None = None) -> None:
         self._inner.write(text, style)
-        self._f.write(text + "\n")
+        if not self._f.closed:
+            self._f.write(text + "\n")
 
     def set_status(self, text: str) -> None:
         self._inner.set_status(text)
 
     def log(self, text: str) -> None:
         """Write a line directly to the log (e.g. user input) without sending to UI."""
-        self._f.write(text + "\n")
+        if not self._f.closed:
+            self._f.write(text + "\n")
 
     def close(self) -> None:
         self._f.close()
