@@ -1,12 +1,21 @@
-"""Importable agent definition — used by both main.py (CLI) and langgraph dev (Studio)."""
+"""Agent definition — used by both the CLI session and langgraph dev (Studio)."""
 
 import os
 
+from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
 from langchain.chat_models import init_chat_model
+from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from langgraph.types import interrupt
 
-from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
+from deepagents.graph import BASE_AGENT_PROMPT
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgentMiddleware
+from deepagents.middleware.summarization import (
+    SummarizationMiddleware,
+    _compute_summarization_defaults,
+)
 
 from tools import (
     REPO_ROOT,
@@ -147,19 +156,65 @@ def make_agent(
     agents: dict | None = None,
     interrupt_on: dict | None = None,
 ):
+    model = model or _default_model
     identity = _identity_section(name, agents) if name and agents else ""
     tools = [git_show, git_show_file, git_blame, git_log, read_around, file_edit, ask_user]
     if os.environ.get("TAVILY_API_KEY"):
         tools = [web_search, web_fetch] + tools
 
-    return create_deep_agent(
-        model=model or _default_model,
+    # FilesystemBackend is used by SummarizationMiddleware for history storage only —
+    # no filesystem tools are exposed to agents (FilesystemMiddleware is intentionally absent).
+    backend = FilesystemBackend(root_dir=REPO_ROOT, virtual_mode=True)
+    summarization_defaults = _compute_summarization_defaults(model)
+
+    def _summarization() -> SummarizationMiddleware:
+        return SummarizationMiddleware(
+            model=model,
+            backend=backend,
+            trigger=summarization_defaults["trigger"],
+            keep=summarization_defaults["keep"],
+            trim_tokens_to_summarize=None,
+            truncate_args_settings=summarization_defaults["truncate_args_settings"],
+        )
+
+    # ── GP subagent middleware (no FilesystemMiddleware) ──────────────────────
+    gp_middleware = [
+        TodoListMiddleware(),
+        _summarization(),
+        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+        PatchToolCallsMiddleware(),
+    ]
+    if interrupt_on:
+        gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+
+    gp_subagent = {
+        **GENERAL_PURPOSE_SUBAGENT,
+        "model": model,
+        "tools": tools,
+        "middleware": gp_middleware,
+    }
+
+    # ── Main agent middleware (no FilesystemMiddleware) ───────────────────────
+    middleware = [
+        TodoListMiddleware(),
+        SubAgentMiddleware(backend=backend, subagents=[gp_subagent]),
+        _summarization(),
+        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+        PatchToolCallsMiddleware(),
+    ]
+    if interrupt_on:
+        middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+
+    system_prompt = identity + v8_instructions + "\n\n" + BASE_AGENT_PROMPT
+
+    return create_agent(
+        model,
         tools=tools,
-        backend=FilesystemBackend(root_dir=REPO_ROOT, virtual_mode=True),
-        system_prompt=identity + v8_instructions,
+        system_prompt=system_prompt,
+        middleware=middleware,
         checkpointer=checkpointer,
-        interrupt_on=interrupt_on or {},
-    )
+        name=name,
+    ).with_config({"recursion_limit": 1000})
 
 
 # langgraph dev supplies its own checkpointer — don't pass one here

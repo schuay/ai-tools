@@ -56,7 +56,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from graph import make_agent
-from tools import preview_diff, write_diff
+from tools.edit import preview_diff
 
 
 # ── IO protocol ──────────────────────────────────────────────────────────────
@@ -312,8 +312,6 @@ class Session:
     # Covers both our custom file_edit and the deepagents built-in write tools.
     INTERRUPT_ON: dict[str, bool] = {
         "file_edit": True,
-        "edit_file": True,
-        "write_file": True,
     }
 
     def _build_agent(self, name, cfg, all_agents: dict) -> object:
@@ -666,10 +664,6 @@ class Session:
         self._io.write(f"[approve?] tool={name}", style="bold yellow")
         if name == "file_edit":
             self._show_diff(preview_diff(args["path"], args["search"], args["replace"]))
-        elif name == "edit_file":
-            self._show_diff(preview_diff(args["file_path"], args["old_string"], args["new_string"]))
-        elif name == "write_file":
-            self._show_diff(write_diff(args["file_path"], args["content"]))
         else:
             self._io.write(json.dumps(args, indent=2), style="dim")
 
