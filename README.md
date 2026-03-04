@@ -1,10 +1,10 @@
 # ai-exp-langgraph
 
-A V8 engineering assistant and general developer toolkit built on LangGraph.
+A multi-model AI assistant and developer toolkit built on LangGraph.
 
 ## Tools
 
-- **`agent <prompt>`** — interactive Textual TUI; full conversation with a senior V8 engineer AI
+- **`agent <prompt>`** — interactive Textual TUI; multi-turn conversation with a choice of models
 - **`qq <question>`** — quick one-shot query from the terminal, optionally with stdin context
 - **`commitmsg`** — generate a commit message for the current `git diff HEAD`
 
@@ -46,13 +46,13 @@ Reload your shell or run `source ~/.zshenv` after editing.
 
 ```sh
 # Interactive agent session
-agent "why does this function deopt?"
+agent "explain what changed in this PR"
 
 # Quick question
-qq what is a map transition in V8
+qq what is the difference between a hard link and a symlink
 
 # Pipe output into a question
-git log --oneline -20 | qq which of these commits touch the maglev compiler
+git log --oneline -20 | qq which of these commits are likely to affect performance
 
 # Generate a commit message for staged changes
 git commit -m "$(commitmsg)"
