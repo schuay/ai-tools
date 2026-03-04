@@ -6,7 +6,7 @@ Currently only for personal experimentation.
 
 ## Tools
 
-- **`agent <prompt>`** — interactive Textual TUI; multi-turn conversation with a choice of models
+- **`agent`** — interactive Textual TUI; multi-turn conversation with a choice of models
 - **`qq <question>`** — quick one-shot query from the terminal, optionally with stdin context
 - **`commitmsg`** — generate a commit message for the current `git diff HEAD`
 
@@ -22,7 +22,7 @@ This installs all three commands into your PATH via `~/.local/bin/`.
 To update after pulling changes:
 
 ```sh
-uv tool upgrade ai-exp-langgraph
+uv tool upgrade ai-ai-exp-langgraph
 ```
 
 ## Environment variables

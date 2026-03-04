@@ -69,7 +69,7 @@ class SessionIO(Protocol):
     def set_status(self, text: str) -> None: ...
 
 
-_LOG_DIR = user_log_path("ai-exp-langgraph")
+_LOG_DIR = user_log_path("ai-tools")
 
 
 class _LoggingIO:
