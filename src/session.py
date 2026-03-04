@@ -620,7 +620,7 @@ class Session:
     def _router_prompt(self) -> str:
         agent_list = ", ".join(self._agents)
         descriptions = "\n".join(
-            f"- {name}: {cfg['description']}" for name, cfg in self._agents.items()
+            f"- {name}: {self.AGENTS[name]['description']}" for name in self._agents
         )
         return (
             f"Route the user query to one of these agents: {agent_list}.\n"
