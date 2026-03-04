@@ -1,4 +1,5 @@
 from tools.edit import file_edit
+from tools.fs import list_dir, write_file
 from tools.git import (
     REPO_ROOT,
     git_blame,
@@ -19,8 +20,10 @@ __all__ = [
     "git_show",
     "git_show_file",
     "in_git_repo",
+    "list_dir",
     "read_around",
     "trim_to_context",
     "web_fetch",
     "web_search",
+    "write_file",
 ]

@@ -104,6 +104,13 @@ def preview_diff(path: str, search: str, replace: str) -> str:
     return _unified_diff(original, original[:start] + replace + original[end:], file_path.name)
 
 
+def preview_write(path: str, content: str) -> str:
+    """Unified diff for creating or overwriting a file (write_file args)."""
+    file_path = Path(path).expanduser()
+    original = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
+    return _unified_diff(original, content, file_path.name)
+
+
 # ── tool ─────────────────────────────────────────────────────────────────────
 
 
