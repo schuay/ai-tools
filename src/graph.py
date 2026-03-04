@@ -14,7 +14,7 @@ from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgentMiddleware
 from deepagents.middleware.summarization import (
     SummarizationMiddleware,
-    _compute_summarization_defaults as compute_summarization_defaults,
+    compute_summarization_defaults,
 )
 
 from tools import (
@@ -157,6 +157,7 @@ def make_agent(
     name: str | None = None,
     agents: dict | None = None,
     interrupt_on: dict | None = None,
+    extra_tools: list | None = None,
 ):
     model = model or _default_model
     identity = _identity_section(name, agents) if name and agents else ""
@@ -173,6 +174,8 @@ def make_agent(
     ]
     if os.environ.get("TAVILY_API_KEY"):
         tools = [web_search, web_fetch] + tools
+    if extra_tools:
+        tools = tools + extra_tools
 
     # FilesystemBackend is used by SummarizationMiddleware for history storage only —
     # no filesystem tools are exposed to agents (FilesystemMiddleware is intentionally absent).
