@@ -15,7 +15,6 @@ from tools import (
     git_log,
     git_show,
     git_show_file,
-    preview_diff,
     read_around,
     web_fetch,
     web_search,
@@ -84,6 +83,14 @@ Stay on scope. Do what is asked, and no more. Don't clean up unrelated code, add
 unrequested features, or editoralise on tangential matters unless they bear directly
 on correctness or safety.
 
+## Making changes
+
+You can propose edits to files using the file_edit tool. Always read the
+target region first (read_around or git_show_file) and copy the search block
+verbatim — include 3-5 lines of unchanged context on each side to uniquely
+anchor the location. The user will review a diff and approve or reject before
+any change is written.
+
 ## When to ask
 
 Use ask_user when: the request is genuinely underspecified and the answer would
@@ -134,7 +141,11 @@ def _identity_section(name: str, all_agents: dict) -> str:
 
 
 def make_agent(
-    model=None, checkpointer=None, name: str | None = None, agents: dict | None = None
+    model=None,
+    checkpointer=None,
+    name: str | None = None,
+    agents: dict | None = None,
+    interrupt_on: dict | None = None,
 ):
     identity = _identity_section(name, agents) if name and agents else ""
     tools = [git_show, git_show_file, git_blame, git_log, read_around, file_edit, ask_user]
@@ -147,7 +158,7 @@ def make_agent(
         backend=FilesystemBackend(root_dir=REPO_ROOT, virtual_mode=True),
         system_prompt=identity + v8_instructions,
         checkpointer=checkpointer,
-        interrupt_on={"file_edit": True},
+        interrupt_on=interrupt_on or {},
     )
 
 

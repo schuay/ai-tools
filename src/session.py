@@ -308,6 +308,9 @@ class Session:
 
     # ── agent construction ───────────────────────────────────────────────────
 
+    # Tools that require explicit user approval before execution.
+    INTERRUPT_ON: dict[str, bool] = {"file_edit": True}
+
     def _build_agent(self, name, cfg, all_agents: dict) -> object:
         kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
         return make_agent(
@@ -315,6 +318,7 @@ class Session:
             checkpointer=MemorySaver(),
             name=name,
             agents=all_agents,
+            interrupt_on=self.INTERRUPT_ON,
         )
 
     def _build_agents(self) -> dict:
