@@ -18,6 +18,8 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+
+from platformdirs import user_log_path
 from threading import Event, Thread
 from typing import Protocol
 
@@ -66,7 +68,7 @@ class SessionIO(Protocol):
     def set_status(self, text: str) -> None: ...
 
 
-_LOG_DIR = Path(__file__).parent / "logs"
+_LOG_DIR = user_log_path("ai-exp-langgraph")
 
 
 class _LoggingIO:
