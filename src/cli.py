@@ -1,5 +1,5 @@
 """
-Textual TUI for the LangGraph v8 commit explainer.
+Textual TUI for the multi-agent assistant.
 
 Pure UI layer — no LangGraph imports. All agent logic lives in session.py.
 Implements the SessionIO protocol so the Session can write output and set
@@ -7,6 +7,7 @@ the input placeholder from its worker thread.
 """
 
 import sys
+from threading import Thread
 
 from rich.text import Text
 from textual import events, on
@@ -92,7 +93,7 @@ class AgentApp(App):
         self._session = Session(io=self, prompt=self._prompt)
         self.query_one(_InputArea).focus()
         self._append(f"> {self._prompt}", style="bold green")
-        self.run_worker(self._session.run, thread=True)
+        Thread(target=self._session.run, daemon=True).start()
 
     def on_unmount(self) -> None:
         if hasattr(self, "_session"):
