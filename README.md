@@ -55,5 +55,5 @@ qq what is a map transition in V8
 git log --oneline -20 | qq which of these commits touch the maglev compiler
 
 # Generate a commit message for staged changes
-commitmsg
+git commit -m "$(commitmsg)"
 ```
