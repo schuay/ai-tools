@@ -6,7 +6,7 @@ Three files, three responsibilities, almost no coupling between them.
 
 **`session.py`** owns all the logic. It talks to the UI exclusively through the two-method `SessionIO` protocol (`write`, `set_status`). The UI calls back via two methods: `submit(text)` and `stop()`. That's the entire interface — `session.py` has zero Textual imports.
 
-**`tui.py`** is pure Textual. `AgentApp` implements `SessionIO` by wrapping `_append` and `_set_placeholder` in `call_from_thread`, which safely marshals calls from the worker onto the event loop. All input flows through `on_input_submitted` → `session.submit()`. Shutdown flows through `on_unmount` → `session.stop()`.
+**`cli.py`** is pure Textual. `AgentApp` implements `SessionIO` by wrapping `_append` and `_set_placeholder` in `call_from_thread`, which safely marshals calls from the worker onto the event loop. All input flows through `on_input_submitted` → `session.submit()`. Shutdown flows through `on_unmount` → `session.stop()`.
 
 ---
 

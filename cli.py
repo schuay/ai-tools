@@ -174,8 +174,12 @@ class AgentApp(App):
         self.query_one(RichLog).scroll_page_down()
 
 
-if __name__ == "__main__":
+def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: python tui.py <prompt>", file=sys.stderr)
+        print("Usage: agent <prompt>", file=sys.stderr)
         sys.exit(1)
     AgentApp(" ".join(sys.argv[1:])).run()
+
+
+if __name__ == "__main__":
+    main()

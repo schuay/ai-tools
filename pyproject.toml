@@ -4,6 +4,11 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
+
+[project.scripts]
+agent = "cli:main"
+qq = "qq:main"
+commitmsg = "commitmsg:main"
 dependencies = [
     "deepagents>=0.4.4",
     "langchain-deepseek>=1.0.1",
