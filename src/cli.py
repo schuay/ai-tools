@@ -123,10 +123,16 @@ class AgentApp(App):
     # These are called from the session's worker thread.
 
     def write(self, text: str, style: str | None = None) -> None:
-        self.call_from_thread(self._append, text, style)
+        try:
+            self.call_from_thread(self._append, text, style)
+        except RuntimeError:
+            pass
 
     def set_status(self, text: str) -> None:
-        self.call_from_thread(self._set_placeholder, text)
+        try:
+            self.call_from_thread(self._set_placeholder, text)
+        except RuntimeError:
+            pass
 
     # ── internal helpers (main thread only) ──────────────────────────────────
 
