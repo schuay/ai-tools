@@ -262,6 +262,7 @@ class Session:
 
     def run(self) -> None:
         """Main loop. Blocks; run on a dedicated worker thread."""
+        self._mcp_client, self._mcp_server_names = self._init_mcp()
         for name, agent_cfg in self.AGENTS.items():
             if name not in self._agents:
                 continue
@@ -362,9 +363,13 @@ class Session:
         per-turn session is just an HTTP connection that is re-established each turn.
         GDB state lives in the server process and survives across turns.
         """
-        from tools.mcp import load_config
+        try:
+            from tools.mcp import load_config
 
-        config = load_config()
+            config = load_config()
+        except Exception as e:
+            self._io.write(f"[mcp] failed to load config: {e}", style="bold red")
+            return None, []
         if not config:
             return None, []
         try:
@@ -398,7 +403,8 @@ class Session:
         # non-MCP turns the pre-built agent from this dict could be used directly.
         self._available_agents = available
         self._checkpointers = {name: MemorySaver() for name in available}
-        self._mcp_client, self._mcp_server_names = self._init_mcp()
+        self._mcp_client: object = None
+        self._mcp_server_names: list[str] = []
         return {
             name: self._build_agent(
                 name, cfg, all_agents=available, checkpointer=self._checkpointers[name]
