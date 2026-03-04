@@ -164,10 +164,11 @@ class Session:
             "model_id": "deepseek-chat",
             "description": "DeepSeek chat — good for code, concise answers",
         },
-        "deepseek-v3": {
-            "model_id": "deepseek:deepseek-v3.2-speciale",
-            "description": "DeepSeek v3 special — alternative capable model",
-        },
+        # Enable once exposed:
+        # "deepseek-v3": {
+        #     "model_id": "deepseek:deepseek-v3.2-speciale",
+        #     "description": "DeepSeek v3 special — alternative capable model",
+        # },
         "gemini-flash-mini": {
             "model_id": "google_genai:gemini-3-flash-preview",
             "include_thoughts": True,
