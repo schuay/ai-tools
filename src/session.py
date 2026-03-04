@@ -11,6 +11,8 @@ The UI supplies a SessionIO implementation and calls:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import os
 import queue
@@ -258,6 +260,8 @@ class Session:
                 continue
             marker = " (default)" if name == self.DEFAULT_AGENT else ""
             self._io.write(f"  {name}: {agent_cfg['description']}{marker}", style="dim")
+        if self._mcp_server_names:
+            self._io.write(f"  mcp: {', '.join(self._mcp_server_names)}", style="dim")
         user_msg = self._prompt or self._wait_input("> ")
         force_agent: str | None = None
         try:
@@ -313,15 +317,56 @@ class Session:
         "write_file": True,
     }
 
-    def _build_agent(self, name, cfg, all_agents: dict) -> object:
+    def _build_agent(
+        self,
+        name: str,
+        cfg: dict,
+        all_agents: dict,
+        extra_tools: list | None = None,
+        checkpointer=None,
+    ) -> object:
         kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
         return make_agent(
             model=init_chat_model(cfg["model_id"], **kwargs),
-            checkpointer=MemorySaver(),
+            checkpointer=checkpointer,
             name=name,
             agents=all_agents,
             interrupt_on=self.INTERRUPT_ON,
+            extra_tools=extra_tools,
         )
+
+    def _init_mcp(self) -> tuple:
+        """Load MCP config and create a MultiServerMCPClient, or return (None, []).
+
+        The client is stateless — it holds connection configs, not live connections.
+        Actual sessions are opened per-turn in _run_turn() using client.session(),
+        which is the pattern recommended by langchain-mcp-adapters for stateful servers:
+          https://docs.langchain.com/oss/python/langchain/mcp#stateful-sessions
+
+        For stdio transport: each session spawns a subprocess that lives for the
+        duration of one agent turn (all tool calls in that turn share the subprocess).
+        Between turns the subprocess is killed and restarted. Cross-turn state is NOT
+        preserved; if you need that, a full async refactor is required (persistent loop).
+
+        For HTTP/SSE transport: the server process is long-lived regardless; the
+        per-turn session is just an HTTP connection that is re-established each turn.
+        GDB state lives in the server process and survives across turns.
+        """
+        from tools.mcp import load_config
+
+        config = load_config()
+        if not config:
+            return None, []
+        try:
+            from langchain_mcp_adapters.client import MultiServerMCPClient
+
+            return MultiServerMCPClient(config), list(config.keys())
+        except ImportError:
+            self._io.write("[mcp] langchain-mcp-adapters not installed", style="bold red")
+            return None, []
+        except Exception as e:
+            self._io.write(f"[mcp] failed to init client: {e}", style="bold red")
+            return None, []
 
     def _build_agents(self) -> dict:
         available = {
@@ -329,8 +374,23 @@ class Session:
             for name, cfg in self.AGENTS.items()
             if not (key := _provider_key_var(cfg["model_id"])) or os.environ.get(key)
         }
+        # Store available configs and checkpointers separately from the compiled agents.
+        # Checkpointers must survive agent rebuilds: per-turn MCP sessions require us to
+        # recompile the agent each turn (to inject session-bound tools), but the
+        # MemorySaver instance must be shared so LangGraph thread history is preserved.
+        # All deepagents middleware (TodoList, Summarization, etc.) stores its state
+        # through LangGraph's checkpoint, not in middleware instance vars, so rebuilding
+        # the compiled agent is safe.
+        #
+        # Optimisation opportunity: only rebuild when MCP tools are configured; for
+        # non-MCP turns the pre-built agent from this dict could be used directly.
+        self._available_agents = available
+        self._checkpointers = {name: MemorySaver() for name in available}
+        self._mcp_client, self._mcp_server_names = self._init_mcp()
         return {
-            name: self._build_agent(name, cfg, all_agents=available)
+            name: self._build_agent(
+                name, cfg, all_agents=available, checkpointer=self._checkpointers[name]
+            )
             for name, cfg in available.items()
         }
 
@@ -358,7 +418,66 @@ class Session:
 
         while True:
             self._steer_event.clear()
-            steered, resume, parts = self._stream(agent, config, current_input)
+
+            if self._mcp_client:
+                # Per-turn stateful MCP sessions (docs pattern):
+                #   async with client.session(name) as session:
+                #       tools = await load_mcp_tools(session)
+                #       agent = create_agent(..., tools)
+                #
+                # The agent is rebuilt each turn so it carries the session-bound tools.
+                # The checkpointer is shared (self._checkpointers[agent_name]) so the
+                # LangGraph thread history (messages, tool calls) survives across turns.
+                #
+                # For stdio servers: the subprocess lives for the whole turn (one
+                # asyncio.run()), then dies. Cross-turn state is NOT preserved.
+                # For HTTP servers: the server process is long-lived; per-turn sessions
+                # are just reconnections and GDB state survives across turns.
+                #
+                # Optimisation: if MCP tools are unlikely to be called (e.g. a pure
+                # text conversation), skipping the session setup would save latency.
+                # For now we always rebuild; a future version could check the user
+                # message for signals before opening sessions.
+                cfg = self._available_agents[agent_name]
+                checkpointer = self._checkpointers[agent_name]
+                available = self._available_agents
+
+                async def _mcp_runner(chunk_q, _cur=current_input) -> None:
+                    from langchain_mcp_adapters.tools import load_mcp_tools
+
+                    async with contextlib.AsyncExitStack() as stack:
+                        sessions = {
+                            name: await stack.enter_async_context(
+                                self._mcp_client.session(name)
+                            )
+                            for name in self._mcp_server_names
+                        }
+                        mcp_tools: list = []
+                        for name, sess in sessions.items():
+                            mcp_tools.extend(
+                                await load_mcp_tools(sess, server_name=name)
+                            )
+                        turn_agent = self._build_agent(
+                            agent_name,
+                            cfg,
+                            all_agents=available,
+                            extra_tools=mcp_tools,
+                            checkpointer=checkpointer,
+                        )
+                        async for item in turn_agent.astream(
+                            _cur,
+                            config=config,
+                            stream_mode=["messages", "updates"],
+                            subgraphs=True,
+                        ):
+                            chunk_q.put(("chunk", item))
+
+                steered, resume, parts = self._stream(
+                    None, config, current_input, async_agent_runner=_mcp_runner
+                )
+            else:
+                steered, resume, parts = self._stream(agent, config, current_input)
+
             response_parts.extend(parts)
 
             if steered:
@@ -391,34 +510,56 @@ class Session:
     # ── streaming ────────────────────────────────────────────────────────────
 
     def _stream(
-        self, agent, config: dict, current_input: dict | Command
+        self,
+        agent,
+        config: dict,
+        current_input: dict | Command,
+        *,
+        async_agent_runner=None,
     ) -> tuple[bool, Command | None, list[str]]:
         """
-        Drive one agent.stream() call.
+        Drive one agent.stream() (or astream()) call.
         Returns (steered, resume_command_or_None, accumulated_text_parts).
 
         The generator runs in a producer thread so that the worker thread can
         check the interrupt/stop/steer events every POLL_MS milliseconds instead
         of only between chunks (which could be 10s+ apart during LLM thinking or
         tool execution).
+
+        async_agent_runner: if provided, the producer runs it via asyncio.run()
+        instead of the default agent.stream() path. Used for MCP stateful sessions
+        (see _run_turn). In that case `agent` may be None.
         """
         POLL_MS = 0.05  # 50 ms
 
         chunk_q: queue.Queue = queue.Queue()
 
-        def _producer() -> None:
-            try:
-                for item in agent.stream(
-                    current_input,
-                    config=config,
-                    stream_mode=["messages", "updates"],
-                    subgraphs=True,
-                ):
-                    chunk_q.put(("chunk", item))
-            except Exception as exc:
-                chunk_q.put(("error", exc))
-            finally:
-                chunk_q.put(("done", None))
+        if async_agent_runner is not None:
+            # MCP path: the runner opens sessions, rebuilds the agent with
+            # session-bound tools, and iterates astream(). All of this happens
+            # inside a single asyncio.run() so the MCP subprocess (stdio) or
+            # connection (HTTP) stays alive for the entire agent turn.
+            def _producer() -> None:
+                try:
+                    asyncio.run(async_agent_runner(chunk_q))
+                except Exception as exc:
+                    chunk_q.put(("error", exc))
+                finally:
+                    chunk_q.put(("done", None))
+        else:
+            def _producer() -> None:
+                try:
+                    for item in agent.stream(
+                        current_input,
+                        config=config,
+                        stream_mode=["messages", "updates"],
+                        subgraphs=True,
+                    ):
+                        chunk_q.put(("chunk", item))
+                except Exception as exc:
+                    chunk_q.put(("error", exc))
+                finally:
+                    chunk_q.put(("done", None))
 
         Thread(target=_producer, daemon=True).start()
 
