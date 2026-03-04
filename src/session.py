@@ -584,6 +584,7 @@ class Session:
         buf = _LineBuffer(self._io)
         last_activity = time.monotonic()
         shown_wait_secs = 0
+        usage: dict | None = None
 
         while True:
             # Check control events before blocking on the next chunk.
@@ -638,6 +639,9 @@ class Session:
                 continue
 
             chunk, _meta = data
+
+            if isinstance(chunk, AIMessageChunk) and chunk.usage_metadata:
+                usage = chunk.usage_metadata
 
             if isinstance(chunk, AIMessageChunk) and chunk.tool_call_chunks:
                 for tc in chunk.tool_call_chunks:
@@ -715,6 +719,10 @@ class Session:
                             buf.push(text)
 
         buf.flush()
+        if usage:
+            inp = usage.get("input_tokens", 0)
+            out = usage.get("output_tokens", 0)
+            self._io.write(f"[tokens] in={inp} out={out}", style="dim")
         return False, None, text_parts
 
     # ── routing ──────────────────────────────────────────────────────────────
