@@ -10,7 +10,7 @@ REPO_ROOT = os.getcwd()
 
 
 def _git(args: list[str]) -> str:
-    r = subprocess.run(args, cwd=REPO_ROOT, capture_output=True, text=True)
+    r = subprocess.run(args, cwd=REPO_ROOT, capture_output=True, text=True, errors="replace")
     return r.stdout if r.returncode == 0 else f"Error: {r.stderr.strip()}"
 
 
