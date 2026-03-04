@@ -51,7 +51,9 @@ def _find(content: str, search: str) -> tuple[int, int] | None:
     best_ratio, best_i = 0.0, -1
     for i in range(len(lines) - n + 1):
         window = "".join(lines[i : i + n]).strip()
-        ratio = difflib.SequenceMatcher(None, window, search_joined, autojunk=False).ratio()
+        ratio = difflib.SequenceMatcher(
+            None, window, search_joined, autojunk=False
+        ).ratio()
         if ratio > best_ratio:
             best_ratio, best_i = ratio, i
             if ratio >= 0.99:
@@ -98,7 +100,9 @@ def preview_diff(path: str, search: str, replace: str) -> str:
         )
 
     start, end = match
-    return _unified_diff(original, original[:start] + replace + original[end:], file_path.name)
+    return _unified_diff(
+        original, original[:start] + replace + original[end:], file_path.name
+    )
 
 
 def preview_write(path: str, content: str) -> str:
@@ -126,7 +130,9 @@ def list_dir(path: str = ".") -> str:
         return f"Error: {path} is not a directory"
 
     try:
-        entries = sorted(dir_path.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+        entries = sorted(
+            dir_path.iterdir(), key=lambda p: (p.is_file(), p.name.lower())
+        )
     except PermissionError as e:
         return f"Error: {e}"
 

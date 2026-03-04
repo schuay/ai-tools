@@ -46,7 +46,9 @@ class _InputArea(TextArea):
         event.prevent_default()
         if not self.read_only:
             start, end = self.selection
-            result = self.replace(event.text, start, end, maintain_selection_offset=False)
+            result = self.replace(
+                event.text, start, end, maintain_selection_offset=False
+            )
             if result:
                 self.move_cursor(result.end_location)
 

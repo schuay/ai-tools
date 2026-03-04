@@ -20,13 +20,18 @@ def web_search(query: str, max_results: int = 5) -> str:
     if not api_key:
         return "Error: TAVILY_API_KEY environment variable is not set."
     try:
-        results = TavilyClient(api_key=api_key).search(
-            query=query, search_depth="basic", max_results=max_results
-        ).get("results", [])
-        return "\n".join(
-            f"Title: {r['title']}\nURL: {r['url']}\nSnippet: {r['content']}\n---"
-            for r in results
-        ) or "No results found."
+        results = (
+            TavilyClient(api_key=api_key)
+            .search(query=query, search_depth="basic", max_results=max_results)
+            .get("results", [])
+        )
+        return (
+            "\n".join(
+                f"Title: {r['title']}\nURL: {r['url']}\nSnippet: {r['content']}\n---"
+                for r in results
+            )
+            or "No results found."
+        )
     except Exception as e:
         return f"Error performing web search: {e}"
 
@@ -49,7 +54,11 @@ def web_fetch(url: str) -> str:
             )
         if not content:
             return "Error: could not extract meaningful content from the page."
-        return content[:30000] + "\n… (content truncated for length)" if len(content) > 30000 else content
+        return (
+            content[:30000] + "\n… (content truncated for length)"
+            if len(content) > 30000
+            else content
+        )
     except httpx.HTTPStatusError as e:
         return f"HTTP {e.response.status_code} fetching {url}"
     except Exception as e:

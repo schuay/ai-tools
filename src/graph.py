@@ -160,7 +160,17 @@ def make_agent(
 ):
     model = model or _default_model
     identity = _identity_section(name, agents) if name and agents else ""
-    tools = [git_show, git_show_file, git_blame, git_log, read_around, list_dir, edit_file, write_file, ask_user]
+    tools = [
+        git_show,
+        git_show_file,
+        git_blame,
+        git_log,
+        read_around,
+        list_dir,
+        edit_file,
+        write_file,
+        ask_user,
+    ]
     if os.environ.get("TAVILY_API_KEY"):
         tools = [web_search, web_fetch] + tools
 

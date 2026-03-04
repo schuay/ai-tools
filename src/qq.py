@@ -19,7 +19,15 @@ from argparse import ArgumentParser
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from tools import git_blame, git_log, git_show, git_show_file, read_around, web_fetch, web_search
+from tools import (
+    git_blame,
+    git_log,
+    git_show,
+    git_show_file,
+    read_around,
+    web_fetch,
+    web_search,
+)
 from tools.git import in_git_repo
 
 # ── model ─────────────────────────────────────────────────────────────────────
@@ -58,13 +66,14 @@ def _extract_text(content: object) -> str:
         return content
     if isinstance(content, list):
         return "".join(
-            b.get("text", "") for b in content
+            b.get("text", "")
+            for b in content
             if isinstance(b, dict) and b.get("type") == "text"
         )
     return str(content)
 
 
-STDIN_INLINE_LIMIT = 8_000   # chars; beyond this, expose grep/read tools instead
+STDIN_INLINE_LIMIT = 8_000  # chars; beyond this, expose grep/read tools instead
 STDIN_PREVIEW_LINES = 20
 
 
@@ -153,8 +162,12 @@ def run(query: str, stdin_data: str) -> str:
 
 def main() -> None:
     parser = ArgumentParser(description="Quick query CLI")
-    parser.add_argument("-e", "--echo", action="store_true",
-                        help="Echo stdin to stdout before the answer")
+    parser.add_argument(
+        "-e",
+        "--echo",
+        action="store_true",
+        help="Echo stdin to stdout before the answer",
+    )
     parser.add_argument("query", nargs="+")
     args = parser.parse_args()
 
