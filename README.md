@@ -22,7 +22,7 @@ This installs all three commands into your PATH via `~/.local/bin/`.
 To update after pulling changes:
 
 ```sh
-uv tool upgrade ai-ai-exp-langgraph
+uv tool upgrade ai-tools
 ```
 
 ## Environment variables
