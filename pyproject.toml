@@ -27,5 +27,6 @@ qq = "qq:main"
 commitmsg = "commitmsg:main"
 
 [tool.setuptools]
+package-dir = {"" = "src"}
 py-modules = ["cli", "commitmsg", "graph", "qq", "session"]
 packages = ["tools"]

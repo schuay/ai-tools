@@ -10,4 +10,10 @@ wheels/
 # Virtual environments
 .venv
 
+# Secrets
 .env
+
+# Tool caches / local state
+.ruff_cache/
+.langgraph_api/
+.claude/
