@@ -14,7 +14,7 @@ from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgentMiddleware
 from deepagents.middleware.summarization import (
     SummarizationMiddleware,
-    compute_summarization_defaults,
+    _compute_summarization_defaults as compute_summarization_defaults,
 )
 
 from tools import (
