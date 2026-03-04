@@ -14,7 +14,7 @@ from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgentMiddleware
 from deepagents.middleware.summarization import (
     SummarizationMiddleware,
-    _compute_summarization_defaults,
+    compute_summarization_defaults,
 )
 
 from tools import (
@@ -145,7 +145,7 @@ def _identity_section(name: str, all_agents: dict) -> str:
         f"## Other agents in this session\n"
         f"{others}\n\n"
         f"When you see a message prefixed with an agent name followed by ':' or ',' "
-        f'(e.g. "claude-sonnet: what about X?"), that is a routing directive — '
+        f'(e.g. "sonnet: what about X?"), that is a routing directive — '
         f"the prefix names the intended recipient, not a subject of discussion. "
         f"Ignore the prefix and focus on the content.\n\n"
     )
@@ -167,7 +167,7 @@ def make_agent(
     # FilesystemBackend is used by SummarizationMiddleware for history storage only —
     # no filesystem tools are exposed to agents (FilesystemMiddleware is intentionally absent).
     backend = FilesystemBackend(root_dir=REPO_ROOT, virtual_mode=True)
-    summarization_defaults = _compute_summarization_defaults(model)
+    summarization_defaults = compute_summarization_defaults(model)
 
     def _summarization() -> SummarizationMiddleware:
         return SummarizationMiddleware(

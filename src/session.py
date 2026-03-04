@@ -155,21 +155,21 @@ class Session:
             "reasoning": {"effort": "medium", "summary": "auto"},
             "description": "OpenAI GPT-5.2",
         },
-        "gpt-pro": {
+        "turbo": {
             "model_id": "openai:gpt-5.2-pro",
             "reasoning": {"effort": "high", "summary": "auto"},
             "description": "OpenAI GPT-5.2 Pro — higher reasoning effort",
         },
-        "gpt-mini": {
+        "mini": {
             "model_id": "openai:gpt-5-mini",
             "reasoning": {"effort": "medium", "summary": "auto"},
             "description": "OpenAI GPT-5 mini — faster, more cost-efficient",
         },
-        "deepseek": {
+        "seek": {
             "model_id": "deepseek-chat",
             "description": "DeepSeek chat",
         },
-        "flash-mini": {
+        "lite": {
             "model_id": "google_genai:gemini-3-flash-preview",
             "include_thoughts": True,
             "thinking_level": "minimal",
@@ -202,7 +202,7 @@ class Session:
         },
     }
     DEFAULT_AGENT = "flash"
-    ROUTER_AGENT_NAME = "flash-mini"
+    ROUTER_AGENT_NAME = "lite"
 
     # Keys in AGENTS entries that are not forwarded to init_chat_model.
     _METADATA_KEYS = frozenset({"model_id", "description"})
