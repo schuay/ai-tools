@@ -11,6 +11,7 @@ Flags:
     -e    Echo stdin to stdout before the answer (useful in pipelines).
 """
 
+import os
 import re
 import sys
 from argparse import ArgumentParser
@@ -100,7 +101,9 @@ def _make_stdin_tools(data: str):
 
 
 def run(query: str, stdin_data: str) -> str:
-    tools = [web_search, web_fetch]
+    tools: list = [web_fetch]
+    if os.environ.get("TAVILY_API_KEY"):
+        tools = [web_search] + tools
     if in_git_repo():
         tools = [git_show, git_show_file, git_blame, git_log, read_around] + tools
 

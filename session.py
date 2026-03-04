@@ -12,6 +12,7 @@ The UI supplies a SessionIO implementation and calls:
 from __future__ import annotations
 
 import json
+import os
 import queue
 import time
 import traceback
@@ -19,6 +20,19 @@ from datetime import datetime
 from pathlib import Path
 from threading import Event, Thread
 from typing import Protocol
+
+
+def _provider_key_var(model_id: str) -> str | None:
+    """Return the env-var name required by this model_id's provider, or None."""
+    if model_id.startswith("openai:"):
+        return "OPENAI_API_KEY"
+    if model_id.startswith("anthropic:"):
+        return "ANTHROPIC_API_KEY"
+    if model_id.startswith("google_genai:"):
+        return "GOOGLE_API_KEY"
+    if model_id.startswith("deepseek:") or model_id.startswith("deepseek-"):
+        return "DEEPSEEK_API_KEY"
+    return None
 
 
 class _Stopped(Exception):
@@ -290,20 +304,25 @@ class Session:
 
     # ── agent construction ───────────────────────────────────────────────────
 
-    def _build_agent(self, name, cfg):
+    def _build_agent(self, name, cfg, all_agents: dict) -> object:
         kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
         return make_agent(
             model=init_chat_model(cfg["model_id"], **kwargs),
             checkpointer=MemorySaver(),
             name=name,
-            agents=self.AGENTS,
+            agents=all_agents,
         )
 
     def _build_agents(self) -> dict:
-        agents = {}
-        for name, cfg in self.AGENTS.items():
-            agents[name] = self._build_agent(name, cfg)
-        return agents
+        available = {
+            name: cfg
+            for name, cfg in self.AGENTS.items()
+            if not (key := _provider_key_var(cfg["model_id"])) or os.environ.get(key)
+        }
+        return {
+            name: self._build_agent(name, cfg, all_agents=available)
+            for name, cfg in available.items()
+        }
 
     # ── turn orchestration ───────────────────────────────────────────────────
 
@@ -543,7 +562,7 @@ class Session:
         """
         q = query.lower()
         # Sort longest-first so "deepseek-r" is matched before "deepseek".
-        for name in sorted(self.AGENTS, key=len, reverse=True):
+        for name in sorted(self._agents, key=len, reverse=True):
             if name in q:
                 self._io.write(f"[routing → {name} (explicit)]", style="dim")
                 return name
@@ -573,7 +592,7 @@ class Session:
                 self._io.write(f"[routing → {normalized}]", style="dim")
                 return normalized
             # Fuzzy fallback: first agent name contained in the response.
-            for name in sorted(self.AGENTS, key=len, reverse=True):
+            for name in sorted(self._agents, key=len, reverse=True):
                 if name in normalized:
                     self._io.write(f"[routing → {name} (fuzzy: {raw!r})]", style="dim")
                     return name
@@ -586,9 +605,9 @@ class Session:
         return self._last_agent or self.DEFAULT_AGENT
 
     def _router_prompt(self) -> str:
-        agent_list = ", ".join(self.AGENTS)
+        agent_list = ", ".join(self._agents)
         descriptions = "\n".join(
-            f"- {name}: {cfg['description']}" for name, cfg in self.AGENTS.items()
+            f"- {name}: {cfg['description']}" for name, cfg in self._agents.items()
         )
         return (
             f"Route the user query to one of these agents: {agent_list}.\n"

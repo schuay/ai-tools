@@ -1,5 +1,7 @@
 """Importable agent definition — used by both main.py (CLI) and langgraph dev (Studio)."""
 
+import os
+
 from langchain.chat_models import init_chat_model
 from langgraph.types import interrupt
 
@@ -133,18 +135,13 @@ def make_agent(
     model=None, checkpointer=None, name: str | None = None, agents: dict | None = None
 ):
     identity = _identity_section(name, agents) if name and agents else ""
+    tools = [git_show, git_show_file, git_blame, git_log, read_around, ask_user]
+    if os.environ.get("TAVILY_API_KEY"):
+        tools = [web_search, web_fetch] + tools
+
     return create_deep_agent(
         model=model or _default_model,
-        tools=[
-            git_show,
-            git_show_file,
-            git_blame,
-            git_log,
-            read_around,
-            web_search,
-            web_fetch,
-            ask_user,
-        ],
+        tools=tools,
         backend=FilesystemBackend(root_dir=REPO_ROOT, virtual_mode=True),
         system_prompt=identity + v8_instructions,
         checkpointer=checkpointer,
