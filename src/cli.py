@@ -7,6 +7,8 @@ the input placeholder from its worker thread.
 """
 
 import sys
+import threading
+import traceback
 from threading import Thread
 
 from rich.text import Text
@@ -191,7 +193,15 @@ class AgentApp(App):
         self.query_one(RichLog).scroll_page_down()
 
 
+def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
+    if args.exc_type is SystemExit:
+        return
+    traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+    sys.stderr.flush()
+
+
 def main() -> None:
+    threading.excepthook = _thread_excepthook
     AgentApp(" ".join(sys.argv[1:])).run()
 
 
