@@ -1,6 +1,8 @@
-# ai-exp-langgraph
+# ai-tools
 
 A multi-model AI assistant and developer toolkit built on LangGraph.
+
+Currently only for personal experimentation.
 
 ## Tools
 
