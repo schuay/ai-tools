@@ -25,3 +25,6 @@ dependencies = [
 agent = "cli:main"
 qq = "qq:main"
 commitmsg = "commitmsg:main"
+
+[tool.setuptools]
+py-modules = ["cli", "commitmsg", "graph", "qq", "session"]
