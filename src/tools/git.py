@@ -39,9 +39,21 @@ def in_git_repo() -> bool:
 # ── tools ─────────────────────────────────────────────────────────────────────
 
 
-def git_show(commit_hash: str) -> str:
-    """Show the diff and metadata for a git commit in the repository."""
-    return _git(["git", "show", commit_hash])
+def git_show(commit_hash: str, line: int | None = None, context: int = 200) -> str:
+    """Show the diff and metadata for a git commit in the repository.
+
+    line: if given, centre the output on this 1-based line number and show `context` lines around it
+    context: lines to show before and after `line` (default 200); when line is not given, limits total output lines
+    """
+    out = _git(["git", "show", commit_hash])
+    if out.startswith("Error:"):
+        return out
+    if line is not None:
+        return trim_to_context(out, line, context)
+    lines = out.splitlines(keepends=True)
+    if len(lines) > context:
+        return "".join(lines[:context]) + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
+    return out
 
 
 def git_show_file(
