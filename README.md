@@ -11,7 +11,8 @@ A multi-model AI assistant and developer toolkit built on LangGraph.
 ## Installation
 
 ```sh
-uv tool install .
+uv tool install .  # locally
+uv tool install https://github.com/schuay/ai-tools.git  # from github
 ```
 
 This installs all three commands into your PATH via `~/.local/bin/`.
