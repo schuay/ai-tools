@@ -60,9 +60,8 @@ class AgentApp(App):
     CSS = """
     RichLog {
         height: 1fr;
-        border: tall $primary;
         padding: 0 1;
-        scrollbar-gutter: stable;
+        scrollbar-size: 0 0;
     }
     _InputArea {
         dock: bottom;
