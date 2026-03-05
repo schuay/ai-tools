@@ -2,6 +2,7 @@ from tools.fs import edit_file, list_dir, write_file
 from tools.git import (
     REPO_ROOT,
     git_blame,
+    git_grep,
     git_log,
     git_show,
     git_show_file,
@@ -15,6 +16,7 @@ __all__ = [
     "REPO_ROOT",
     "edit_file",
     "git_blame",
+    "git_grep",
     "git_log",
     "git_show",
     "git_show_file",

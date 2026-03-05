@@ -21,6 +21,7 @@ from tools import (
     REPO_ROOT,
     edit_file,
     git_blame,
+    git_grep,
     git_log,
     git_show,
     git_show_file,
@@ -162,6 +163,7 @@ def make_agent(
     model = model or _default_model
     identity = _identity_section(name, agents) if name and agents else ""
     tools = [
+        git_grep,
         git_show,
         git_show_file,
         git_blame,

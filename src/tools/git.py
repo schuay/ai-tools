@@ -44,6 +44,38 @@ def in_git_repo() -> bool:
 # ── tools ─────────────────────────────────────────────────────────────────────
 
 
+def git_grep(
+    pattern: str,
+    path: str | None = None,
+    git_context: int = 0,
+    line: int | None = None,
+    context: int = 200,
+) -> str:
+    """Search for a pattern across all tracked files in the git repository.
+
+    pattern: the search pattern (passed to git grep -E)
+    path: optional path to restrict the search (relative to repo root)
+    git_context: lines of context around each match (git grep -C)
+    line: if given, centre the output on this 1-based line number and show `context` lines around it
+    context: lines to show before and after `line` (default 200); when line is not given, limits total output lines
+    """
+    cmd = ["git", "grep", "-En", "--heading"]
+    if git_context:
+        cmd += ["-C", str(git_context)]
+    cmd.append(pattern)
+    if path:
+        cmd += ["--", path]
+    out = _git(cmd)
+    if out.startswith("Error:"):
+        return out
+    if line is not None:
+        return trim_to_context(out, line, context)
+    lines = out.splitlines(keepends=True)
+    if len(lines) > context:
+        return "".join(lines[:context]) + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
+    return out
+
+
 def git_show(commit_hash: str, line: int | None = None, context: int = 200) -> str:
     """Show the diff and metadata for a git commit in the repository.
 
