@@ -736,9 +736,10 @@ class Session:
     def _route(self, query: str) -> str:
         """Switch agent only if one is mentioned by name; otherwise stay put."""
         q = query.lower()
-        # Fast path: exact name substring match (longest first to avoid prefix collisions).
+        # Fast path: "name:" prefix match (longest first to avoid prefix collisions).
+        # Requires a colon to prevent accidental matches, e.g. "--turbolev" → "turbo".
         for name in sorted(self._agents, key=len, reverse=True):
-            if name in q:
+            if f"{name}:" in q:
                 self._io.write(f"[routing → {name}]", style="dim")
                 return name
 
