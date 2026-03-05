@@ -147,10 +147,14 @@ def grep_files(
         return "No matches found."
     if line is not None:
         from tools.git import trim_to_context
+
         return trim_to_context(out, line, context)
     lines = out.splitlines(keepends=True)
     if len(lines) > context:
-        return "".join(lines[:context]) + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
+        return (
+            "".join(lines[:context])
+            + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
+        )
     return out
 
 

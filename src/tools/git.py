@@ -72,7 +72,10 @@ def git_grep(
         return trim_to_context(out, line, context)
     lines = out.splitlines(keepends=True)
     if len(lines) > context:
-        return "".join(lines[:context]) + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
+        return (
+            "".join(lines[:context])
+            + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
+        )
     return out
 
 
