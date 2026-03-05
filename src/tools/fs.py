@@ -12,6 +12,7 @@ mechanism: the agent is configured with interrupt_on={"edit_file": True,
 
 import difflib
 import os
+import subprocess
 from pathlib import Path
 
 
@@ -113,6 +114,44 @@ def preview_write(path: str, content: str) -> str:
 
 
 # ── agent tools ───────────────────────────────────────────────────────────────
+
+
+def grep_files(
+    pattern: str,
+    path: str = ".",
+    glob: str | None = None,
+    grep_context: int = 0,
+    line: int | None = None,
+    context: int = 200,
+) -> str:
+    """Search for a pattern in files on the filesystem using grep.
+
+    Useful for files not tracked by git (build outputs, logs, traces, etc.).
+
+    pattern: the search pattern (extended regex, grep -E)
+    path: file or directory to search (default: current working directory)
+    glob: if given, restrict to files matching this pattern (e.g. "*.py", "*.log")
+    grep_context: lines of context around each match (grep -C)
+    line: if given, centre the output on this 1-based line number and show `context` lines around it
+    context: lines to show before and after `line` (default 200); when line is not given, limits total output lines
+    """
+    cmd = ["grep", "-rEn", "--color=never"]
+    if grep_context:
+        cmd += ["-C", str(grep_context)]
+    if glob:
+        cmd += ["--include", glob]
+    cmd += [pattern, path]
+    r = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    out = r.stdout if r.returncode in (0, 1) else f"Error: {r.stderr.strip()}"
+    if not out.strip():
+        return "No matches found."
+    if line is not None:
+        from tools.git import trim_to_context
+        return trim_to_context(out, line, context)
+    lines = out.splitlines(keepends=True)
+    if len(lines) > context:
+        return "".join(lines[:context]) + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
+    return out
 
 
 def list_dir(path: str = ".") -> str:
