@@ -3,6 +3,7 @@
 import os
 
 from langchain.agents import create_agent
+from langchain_core.tools import StructuredTool
 from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
 from langchain.chat_models import init_chat_model
 from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
@@ -180,6 +181,13 @@ def make_agent(
         tools = [web_search, web_fetch] + tools
     if extra_tools:
         tools = tools + extra_tools
+
+    tools = [
+        StructuredTool.from_function(t, handle_tool_error=True)
+        if callable(t) and not isinstance(t, StructuredTool)
+        else t
+        for t in tools
+    ]
 
     # FilesystemBackend is used by SummarizationMiddleware for history storage only —
     # no filesystem tools are exposed to agents (FilesystemMiddleware is intentionally absent).
