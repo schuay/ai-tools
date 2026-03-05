@@ -228,6 +228,12 @@ class Session:
         self._last_agent: str | None = None
         self._agent_history_offset: dict[str, int] = {}
 
+        # Persistent event loop for MCP async turns — reused across turns so that
+        # async HTTP clients (httpx, aiohttp) can keep their connection pools alive.
+        # asyncio.run() closes the loop after each call, which breaks clients on the
+        # second turn with "RuntimeError: Event loop is closed".
+        self._loop = asyncio.new_event_loop()
+
         # Thread synchronisation between the worker (session) and main (UI) threads.
         self._input_event = Event()
         self._input_value = ""
@@ -244,6 +250,7 @@ class Session:
         self._stop.set()
         self._input_event.set()  # unblocks _wait_input
         self._steer_event.set()  # unblocks _stream on next chunk check
+        self._loop.call_soon_threadsafe(self._loop.stop)
         self._io.close()
 
     def interrupt(self) -> None:
@@ -554,12 +561,12 @@ class Session:
 
         if async_agent_runner is not None:
             # MCP path: the runner opens sessions, rebuilds the agent with
-            # session-bound tools, and iterates astream(). All of this happens
-            # inside a single asyncio.run() so the MCP subprocess (stdio) or
-            # connection (HTTP) stays alive for the entire agent turn.
+            # session-bound tools, and iterates astream(). Uses the session's
+            # persistent event loop (self._loop) so async HTTP clients survive
+            # across turns without hitting "Event loop is closed".
             def _producer() -> None:
                 try:
-                    asyncio.run(async_agent_runner(chunk_q))
+                    self._loop.run_until_complete(async_agent_runner(chunk_q))
                 except Exception as exc:
                     chunk_q.put(("error", exc))
                 finally:
