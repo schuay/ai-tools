@@ -587,7 +587,17 @@ class Session:
                 finally:
                     chunk_q.put(("done", None))
 
-        Thread(target=_producer, daemon=True).start()
+        producer_thread = Thread(target=_producer, daemon=True)
+        producer_thread.start()
+
+        def _cancel_mcp_producer() -> None:
+            """Cancel any running async tasks on the MCP loop and join the thread."""
+            if async_agent_runner is not None and producer_thread.is_alive():
+                def _cancel() -> None:
+                    for task in asyncio.all_tasks(self._loop):
+                        task.cancel()
+                self._loop.call_soon_threadsafe(_cancel)
+                producer_thread.join(timeout=5.0)
 
         text_parts: list[str] = []
         current_block: str | None = None
@@ -603,13 +613,16 @@ class Session:
             # Check control events before blocking on the next chunk.
             if self._stop.is_set():
                 buf.flush()
+                _cancel_mcp_producer()
                 raise _Stopped()
             if self._interrupt_event.is_set():
                 self._interrupt_event.clear()
                 buf.flush()
+                _cancel_mcp_producer()
                 raise _Interrupted()
             if self._steer_event.is_set():
                 buf.flush()
+                _cancel_mcp_producer()
                 return True, None, text_parts
 
             try:
