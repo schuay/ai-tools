@@ -122,7 +122,7 @@ def grep_files(
     glob: str | None = None,
     grep_context: int = 0,
     line: int | None = None,
-    context: int = 200,
+    context: int = 80,
 ) -> str:
     """Search for a pattern in files on the filesystem using grep.
 
@@ -133,7 +133,7 @@ def grep_files(
     glob: if given, restrict to files matching this pattern (e.g. "*.py", "*.log")
     grep_context: lines of context around each match (grep -C)
     line: if given, centre the output on this 1-based line number and show `context` lines around it
-    context: lines to show before and after `line` (default 200); when line is not given, limits total output lines
+    context: lines to show before and after `line` (default 80); when line is not given, limits total output lines
     """
     cmd = ["grep", "-rEn", "--color=never"]
     if grep_context:
