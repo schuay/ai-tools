@@ -49,7 +49,7 @@ def git_grep(
     path: str | None = None,
     git_context: int = 0,
     line: int | None = None,
-    context: int = 200,
+    context: int = 80,
 ) -> str:
     """Search for a pattern across all tracked files in the git repository.
 
@@ -57,7 +57,7 @@ def git_grep(
     path: optional path to restrict the search (relative to repo root)
     git_context: lines of context around each match (git grep -C)
     line: if given, centre the output on this 1-based line number and show `context` lines around it
-    context: lines to show before and after `line` (default 200); when line is not given, limits total output lines
+    context: lines to show before and after `line` (default 80); when line is not given, limits total output lines
     """
     cmd = ["git", "grep", "-En", "--heading"]
     if git_context:
@@ -79,11 +79,11 @@ def git_grep(
     return out
 
 
-def git_show(commit_hash: str, line: int | None = None, context: int = 200) -> str:
+def git_show(commit_hash: str, line: int | None = None, context: int = 80) -> str:
     """Show the diff and metadata for a git commit in the repository.
 
     line: if given, centre the output on this 1-based line number and show `context` lines around it
-    context: lines to show before and after `line` (default 200); when line is not given, limits total output lines
+    context: lines to show before and after `line` (default 80); when line is not given, limits total output lines
     """
     out = _git(["git", "show", commit_hash])
     if out.startswith("Error:"):
@@ -112,7 +112,15 @@ def git_show_file(
     out = _git(["git", "show", f"{commit_hash}:{file_path}"])
     if out.startswith("Error:"):
         return out
-    return trim_to_context(out, line, context)
+    if line is not None:
+        return trim_to_context(out, line, context)
+    lines = out.splitlines(keepends=True)
+    if len(lines) > 150:
+        return (
+            "".join(lines[:150])
+            + f"\n[truncated — {len(lines) - 150} more lines; use line= to navigate]"
+        )
+    return out
 
 
 def git_blame(
@@ -135,7 +143,15 @@ def git_blame(
     out = _git(cmd)
     if out.startswith("Error:"):
         return out
-    return trim_to_context(out, line, context)
+    if line is not None:
+        return trim_to_context(out, line, context)
+    lines = out.splitlines(keepends=True)
+    if len(lines) > 150:
+        return (
+            "".join(lines[:150])
+            + f"\n[truncated — {len(lines) - 150} more lines; use line= to navigate]"
+        )
+    return out
 
 
 def git_log(

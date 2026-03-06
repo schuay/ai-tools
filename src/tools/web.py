@@ -55,8 +55,8 @@ def web_fetch(url: str) -> str:
         if not content:
             return "Error: could not extract meaningful content from the page."
         return (
-            content[:30000] + "\n… (content truncated for length)"
-            if len(content) > 30000
+            content[:15000] + "\n… (content truncated for length)"
+            if len(content) > 15000
             else content
         )
     except httpx.HTTPStatusError as e:
