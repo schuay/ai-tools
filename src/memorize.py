@@ -29,9 +29,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from fastembed import TextEmbedding as _FE
 from langchain.chat_models import init_chat_model
+from langchain_core.embeddings import Embeddings
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
@@ -48,14 +49,30 @@ from qdrant_client.models import (
 # ── constants ─────────────────────────────────────────────────────────────────
 
 CURATION_MODEL = "google_genai:gemini-3-flash-preview"
-EMBEDDING_MODEL = "models/text-embedding-004"
+EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"  # local fastembed, 768 dims
 COLLECTION = "v8_memory"
-VECTOR_SIZE = 768  # text-embedding-004 default
+VECTOR_SIZE = 768
 
 SUBSYSTEMS = [
-    "gc", "scavenger", "minorms", "ignition", "maglev", "turbofan",
-    "turboshaft", "liftoff", "wasm", "ic", "builtins", "csa", "torque",
-    "parser", "api", "runtime", "sandbox", "profiler", "debug",
+    "gc",
+    "scavenger",
+    "minorms",
+    "ignition",
+    "maglev",
+    "turbofan",
+    "turboshaft",
+    "liftoff",
+    "wasm",
+    "ic",
+    "builtins",
+    "csa",
+    "torque",
+    "parser",
+    "api",
+    "runtime",
+    "sandbox",
+    "profiler",
+    "debug",
 ]
 TYPES = ["performance", "correctness", "design", "gotcha", "api-change", "refactor"]
 
@@ -92,9 +109,30 @@ Types: {", ".join(TYPES)}
 
 class _Curation(BaseModel):
     store: bool = Field(description="Whether this analysis contains a lasting insight")
-    text: str | None = Field(None, description="Self-contained engineering insight (wiki-style, not commit-centric)")
-    subsystems: list[str] = Field(default_factory=list, description="V8 subsystems this insight applies to")
+    text: str | None = Field(
+        None,
+        description="Self-contained engineering insight (wiki-style, not commit-centric)",
+    )
+    subsystems: list[str] = Field(
+        default_factory=list, description="V8 subsystems this insight applies to"
+    )
     type: str | None = Field(None, description="One of: " + ", ".join(TYPES))
+
+
+# ── embeddings (local fastembed, no API key needed) ───────────────────────────
+
+
+class _FastEmbeddings(Embeddings):
+    """Thin LangChain-compatible wrapper around fastembed.TextEmbedding."""
+
+    def __init__(self, model: str = EMBEDDING_MODEL) -> None:
+        self._model = _FE(model)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [v.tolist() for v in self._model.embed(texts)]
+
+    def embed_query(self, text: str) -> list[float]:
+        return next(self._model.embed([text])).tolist()
 
 
 # ── qdrant setup ──────────────────────────────────────────────────────────────
@@ -114,8 +152,9 @@ def _ensure_collection(client: QdrantClient) -> None:
 
 
 def _make_store(client: QdrantClient) -> QdrantVectorStore:
-    embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
-    return QdrantVectorStore(client=client, collection_name=COLLECTION, embedding=embeddings)
+    return QdrantVectorStore(
+        client=client, collection_name=COLLECTION, embedding=_FastEmbeddings()
+    )
 
 
 # ── frontmatter parsing ───────────────────────────────────────────────────────
@@ -134,7 +173,7 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
         if ": " in line:
             k, v = line.split(": ", 1)
             meta[k.strip()] = v.strip()
-    return meta, text[end + 5:]
+    return meta, text[end + 5 :]
 
 
 # ── curation agent ────────────────────────────────────────────────────────────
@@ -142,10 +181,12 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
 
 def _curate(analysis_body: str) -> _Curation:
     model = init_chat_model(CURATION_MODEL).with_structured_output(_Curation)
-    return model.invoke([
-        SystemMessage(content=CURATION_SYSTEM),
-        HumanMessage(content=analysis_body.strip()),
-    ])
+    return model.invoke(
+        [
+            SystemMessage(content=CURATION_SYSTEM),
+            HumanMessage(content=analysis_body.strip()),
+        ]
+    )
 
 
 # ── ingestion ─────────────────────────────────────────────────────────────────
@@ -171,10 +212,12 @@ def ingest_file(path: Path, store: QdrantVectorStore) -> bool:
         logging.info("%s → SKIP", path.name)
         return False
 
-    logging.info("%s → STORE [%s / %s]", path.name,
-                 ", ".join(result.subsystems), result.type)
+    logging.info(
+        "%s → STORE [%s / %s]", path.name, ", ".join(result.subsystems), result.type
+    )
 
     from langchain_core.documents import Document
+
     doc = Document(
         page_content=result.text,
         metadata={
@@ -285,8 +328,11 @@ def cmd_inspect(client: QdrantClient) -> None:
 
     while True:
         points, offset = client.scroll(
-            COLLECTION, with_payload=True, with_vectors=False,
-            limit=100, offset=offset,
+            COLLECTION,
+            with_payload=True,
+            with_vectors=False,
+            limit=100,
+            offset=offset,
         )
         for p in points:
             m = (p.payload or {}).get("metadata", {})
@@ -314,40 +360,59 @@ def cmd_inspect(client: QdrantClient) -> None:
             print(f"  {t:<16} {n}")
 
 
-def cmd_search(client: QdrantClient, store: QdrantVectorStore,
-               query: str, subsystem: str | None, limit: int) -> None:
+def cmd_search(
+    client: QdrantClient,
+    store: QdrantVectorStore,
+    query: str,
+    subsystem: str | None,
+    limit: int,
+) -> None:
     qdrant_filter = None
     if subsystem:
-        qdrant_filter = Filter(must=[
-            FieldCondition(key="metadata.subsystems", match=MatchValue(value=subsystem))
-        ])
+        qdrant_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="metadata.subsystems", match=MatchValue(value=subsystem)
+                )
+            ]
+        )
     results = store.similarity_search_with_score(query, k=limit, filter=qdrant_filter)
     for doc, score in results:
         m = doc.metadata
-        print(f"\n[{score:.3f}] {m.get('date','')}  {', '.join(m.get('subsystems', []))}  {m.get('type','')}")
-        print(f"  source: {m.get('source_file','')}")
+        print(
+            f"\n[{score:.3f}] {m.get('date', '')}  {', '.join(m.get('subsystems', []))}  {m.get('type', '')}"
+        )
+        print(f"  source: {m.get('source_file', '')}")
         print(f"  {doc.page_content[:300].replace(chr(10), ' ')}")
 
 
-def cmd_list(client: QdrantClient, subsystem: str | None,
-             type_: str | None, limit: int) -> None:
+def cmd_list(
+    client: QdrantClient, subsystem: str | None, type_: str | None, limit: int
+) -> None:
     qdrant_filter = None
     must = []
     if subsystem:
-        must.append(FieldCondition(key="metadata.subsystems", match=MatchValue(value=subsystem)))
+        must.append(
+            FieldCondition(key="metadata.subsystems", match=MatchValue(value=subsystem))
+        )
     if type_:
         must.append(FieldCondition(key="metadata.type", match=MatchValue(value=type_)))
     if must:
         qdrant_filter = Filter(must=must)
 
     points, _ = client.scroll(
-        COLLECTION, with_payload=True, with_vectors=False,
-        limit=limit, scroll_filter=qdrant_filter,
+        COLLECTION,
+        with_payload=True,
+        with_vectors=False,
+        limit=limit,
+        scroll_filter=qdrant_filter,
     )
     for p in points:
         m = (p.payload or {}).get("metadata", {})
         snippet = (p.payload or {}).get("page_content", "")[:80].replace("\n", " ")
-        print(f"{p.id}  {m.get('date','')}  [{', '.join(m.get('subsystems',[]))}]  {m.get('type','')}  {snippet}")
+        print(
+            f"{p.id}  {m.get('date', '')}  [{', '.join(m.get('subsystems', []))}]  {m.get('type', '')}  {snippet}"
+        )
 
 
 def cmd_delete(client: QdrantClient, point_id: str) -> None:
@@ -358,9 +423,15 @@ def cmd_delete(client: QdrantClient, point_id: str) -> None:
 def cmd_delete_commit(client: QdrantClient, commit_hash: str) -> None:
     client.delete(
         COLLECTION,
-        points_selector=FilterSelector(filter=Filter(must=[
-            FieldCondition(key="metadata.commit", match=MatchValue(value=commit_hash))
-        ])),
+        points_selector=FilterSelector(
+            filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="metadata.commit", match=MatchValue(value=commit_hash)
+                    )
+                ]
+            )
+        ),
     )
     print(f"Deleted all entries for commit {commit_hash}")
 
@@ -372,26 +443,43 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Curate V8 commit analyses into a vector memory DB."
     )
-    parser.add_argument("--db", required=True, type=Path, help="Path to Qdrant DB directory")
-    parser.add_argument("--output-dir", type=Path, help="repowatcher output dir to watch")
-    parser.add_argument("--poll", type=int, default=30, metavar="SECONDS",
-                        help="Poll interval in watch mode (default: 30)")
-    parser.add_argument("--model", default=CURATION_MODEL,
-                        help=f"Curation model (default: {CURATION_MODEL})")
-    parser.add_argument("--log-level", default="INFO",
-                        choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument(
+        "--db", required=True, type=Path, help="Path to Qdrant DB directory"
+    )
+    parser.add_argument(
+        "--output-dir", type=Path, help="repowatcher output dir to watch"
+    )
+    parser.add_argument(
+        "--poll",
+        type=int,
+        default=30,
+        metavar="SECONDS",
+        help="Poll interval in watch mode (default: 30)",
+    )
+    parser.add_argument(
+        "--model",
+        default=CURATION_MODEL,
+        help=f"Curation model (default: {CURATION_MODEL})",
+    )
+    parser.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
 
     # Maintenance flags (mutually exclusive with watch/process)
     parser.add_argument("--inspect", action="store_true", help="Show DB stats and exit")
     parser.add_argument("--search", metavar="QUERY", help="Semantic search and exit")
     parser.add_argument("--list", action="store_true", help="List entries and exit")
     parser.add_argument("--delete", metavar="ID", help="Delete entry by point ID")
-    parser.add_argument("--delete-commit", metavar="HASH", help="Delete all entries for a commit")
+    parser.add_argument(
+        "--delete-commit", metavar="HASH", help="Delete all entries for a commit"
+    )
 
     # Filters used by --search and --list
     parser.add_argument("--subsystem", help="Filter by subsystem")
     parser.add_argument("--type", dest="type_", help="Filter by type (for --list)")
-    parser.add_argument("--limit", type=int, default=5, help="Result limit (default: 5)")
+    parser.add_argument(
+        "--limit", type=int, default=5, help="Result limit (default: 5)"
+    )
 
     # Positional: specific files to process
     parser.add_argument("files", nargs="*", type=Path, help=".md files to process")
