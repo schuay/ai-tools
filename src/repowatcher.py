@@ -9,9 +9,9 @@ Usage:
 """
 
 import argparse
-import concurrent.futures
 import json
 import logging
+import queue
 import re
 import signal
 import sys
@@ -273,6 +273,7 @@ def process_commits(
     filter_model,
     analysis_model,
     workers: int = 1,
+    stop_event: threading.Event | None = None,
 ) -> None:
     already = state.processed
     pending = [c for c in commits if c not in already]
@@ -280,33 +281,45 @@ def process_commits(
         logging.info("All %d commit(s) already processed.", len(commits))
         return
 
+    def _stopped() -> bool:
+        return stop_event is not None and stop_event.is_set()
+
     logging.info(
         "Processing %d new commit(s) with %d worker(s).", len(pending), workers
     )
+
     if workers <= 1:
         for commit_hash in pending:
-            _process_one(
-                commit_hash, repo, output_dir, state, filter_model, analysis_model
-            )
-    else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(
-                    _process_one,
-                    c,
-                    repo,
-                    output_dir,
-                    state,
-                    filter_model,
-                    analysis_model,
-                ): c
-                for c in pending
-            }
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    logging.warning("Worker error for %s: %s", futures[future][:8], e)
+            if _stopped():
+                return
+            _process_one(commit_hash, repo, output_dir, state, filter_model, analysis_model)
+        return
+
+    # Parallel path: daemon threads so Ctrl-C exits immediately.
+    q: queue.Queue = queue.Queue()
+    for c in pending:
+        q.put(c)
+
+    def _worker() -> None:
+        while not _stopped():
+            try:
+                commit_hash = q.get_nowait()
+            except queue.Empty:
+                return
+            _process_one(commit_hash, repo, output_dir, state, filter_model, analysis_model)
+
+    threads = [
+        threading.Thread(target=_worker, daemon=True)
+        for _ in range(min(workers, len(pending)))
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        while t.is_alive():
+            if _stopped():
+                logging.info("Stop requested — abandoning in-flight analyses (will retry).")
+                return
+            t.join(timeout=1.0)
 
 
 # ── modes ─────────────────────────────────────────────────────────────────────
@@ -322,6 +335,15 @@ def run_range(
     to_hash: str,
     workers: int = 1,
 ) -> None:
+    stop_event = threading.Event()
+
+    def _handle_signal(signum, frame):
+        logging.info("Signal %s received — stopping …", signum)
+        stop_event.set()
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
     from_ref = git_resolve(from_hash)
     to_ref = git_resolve(to_hash)
     commits = git_commits_since(from_ref, to_ref)
@@ -332,7 +354,7 @@ def run_range(
         len(commits),
     )
     process_commits(
-        commits, repo, output_dir, state, filter_model, analysis_model, workers
+        commits, repo, output_dir, state, filter_model, analysis_model, workers, stop_event
     )
 
 
@@ -390,6 +412,7 @@ def run_daemon(
                         filter_model,
                         analysis_model,
                         workers,
+                        stop_event,
                     )
                 state.set_daemon_tip(tip)
         except Exception as e:
