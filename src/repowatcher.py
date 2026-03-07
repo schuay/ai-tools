@@ -274,17 +274,16 @@ def _run_agent(
 
 # ── filter & analysis ─────────────────────────────────────────────────────────
 
-DIFF_LIMIT = 20_000
 
-
-def is_interesting(diff: str, filter_model) -> tuple[bool, int]:
-    if len(diff) > DIFF_LIMIT:
-        diff = diff[:DIFF_LIMIT] + f"\n… (truncated at {DIFF_LIMIT} chars)"
+def is_interesting(meta: dict, filter_model) -> tuple[bool, int]:
+    prompt = (
+        f"subject: {meta['subject']}\nauthor: {meta['author']}\ndate: {meta['date']}"
+    )
     response = _invoke_with_backoff(
         filter_model.invoke,
         [
             SystemMessage(content=FILTER_SYSTEM),
-            HumanMessage(content=f"<diff>\n{diff}\n</diff>"),
+            HumanMessage(content=prompt),
         ],
     )
     verdict = _extract_text(response.content).strip().upper()
@@ -360,10 +359,10 @@ def _process_one(
     stop_event: threading.Event | None = None,
 ) -> None:
     short = commit_hash[:8]
-    logging.info("Evaluating %s …", short)
-    diff = git_show(commit_hash, context=10_000)
+    meta = git_commit_meta(commit_hash)
+    logging.info("Evaluating %s — %s …", short, meta["subject"])
     try:
-        interesting, filter_tok = is_interesting(diff, filter_model)
+        interesting, filter_tok = is_interesting(meta, filter_model)
     except Exception as e:
         logging.warning("Filter failed for %s: %s — skipping", short, e)
         stats.record(failed=True)
@@ -379,7 +378,6 @@ def _process_one(
         return
 
     logging.info("%s → INTERESTING — analysing …", short)
-    meta = git_commit_meta(commit_hash)
     try:
         analysis, analysis_tok = analyse_commit(
             commit_hash, meta, analysis_model, stop_event
