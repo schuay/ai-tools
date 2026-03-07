@@ -202,7 +202,10 @@ def _token_count(msg: AIMessage) -> int:
 
 def _is_rate_limit(exc: Exception) -> bool:
     msg = str(exc).lower()
-    return any(k in msg for k in ("429", "quota", "rate limit", "resource_exhausted", "exhausted"))
+    return any(
+        k in msg
+        for k in ("429", "quota", "rate limit", "resource_exhausted", "exhausted")
+    )
 
 
 def _invoke_with_backoff(fn, *args, max_retries: int = 8, **kwargs):
@@ -213,16 +216,23 @@ def _invoke_with_backoff(fn, *args, max_retries: int = 8, **kwargs):
         except Exception as e:
             if not _is_rate_limit(e):
                 raise
-            wait = (2 ** attempt) + random.uniform(0, 1)
+            wait = (2**attempt) + random.uniform(0, 1)
             logging.warning(
-                "Rate limited — retrying in %.0fs (attempt %d/%d)", wait, attempt + 1, max_retries
+                "Rate limited — retrying in %.0fs (attempt %d/%d)",
+                wait,
+                attempt + 1,
+                max_retries,
             )
             time.sleep(wait)
     raise RuntimeError(f"Rate limit persisted after {max_retries} retries")
 
 
 def _run_agent(
-    model, tools: list, system_prompt: str, user_prompt: str
+    model,
+    tools: list,
+    system_prompt: str,
+    user_prompt: str,
+    stop_event: threading.Event | None = None,
 ) -> tuple[str, int]:
     tool_map = {fn.__name__: fn for fn in tools}
     bound = model.bind_tools(tools)
@@ -232,6 +242,8 @@ def _run_agent(
     ]
     total_tokens = 0
     while True:
+        if stop_event and stop_event.is_set():
+            raise InterruptedError("stop requested")
         response: AIMessage = _invoke_with_backoff(bound.invoke, messages)
         total_tokens += _token_count(response)
         messages.append(response)
@@ -264,7 +276,12 @@ def is_interesting(diff: str, filter_model) -> tuple[bool, int]:
     return verdict.startswith("INTERESTING"), _token_count(response)
 
 
-def analyse_commit(commit_hash: str, meta: dict, analysis_model) -> tuple[str, int]:
+def analyse_commit(
+    commit_hash: str,
+    meta: dict,
+    analysis_model,
+    stop_event: threading.Event | None = None,
+) -> tuple[str, int]:
     tools = [git_show, git_blame, git_log, git_grep, read_around]
     user_prompt = (
         f"Analyse commit {commit_hash}.\n\n"
@@ -273,7 +290,7 @@ def analyse_commit(commit_hash: str, meta: dict, analysis_model) -> tuple[str, i
         f"Date:    {meta['date']}\n\n"
         "Use git tools to gather the full context before writing your analysis."
     )
-    return _run_agent(analysis_model, tools, ANALYSIS_SYSTEM, user_prompt)
+    return _run_agent(analysis_model, tools, ANALYSIS_SYSTEM, user_prompt, stop_event)
 
 
 # ── output ────────────────────────────────────────────────────────────────────
@@ -325,6 +342,7 @@ def _process_one(
     filter_model,
     analysis_model,
     stats: _RunStats,
+    stop_event: threading.Event | None = None,
 ) -> None:
     short = commit_hash[:8]
     logging.info("Evaluating %s …", short)
@@ -342,10 +360,15 @@ def _process_one(
         state.mark_processed(commit_hash)
         return
 
+    if stop_event and stop_event.is_set():
+        return
+
     logging.info("%s → INTERESTING — analysing …", short)
     meta = git_commit_meta(commit_hash)
     try:
-        analysis, analysis_tok = analyse_commit(commit_hash, meta, analysis_model)
+        analysis, analysis_tok = analyse_commit(
+            commit_hash, meta, analysis_model, stop_event
+        )
         out_path = write_output(output_dir, meta, analysis, repo)
         logging.info(
             "%s → written: %s  [filter: %d tok  analysis: %d tok]",
@@ -400,6 +423,7 @@ def process_commits(
                 filter_model,
                 analysis_model,
                 stats,
+                stop_event,
             )
     else:
         # Parallel path: daemon threads so Ctrl-C exits immediately.
@@ -421,6 +445,7 @@ def process_commits(
                     filter_model,
                     analysis_model,
                     stats,
+                    stop_event,
                 )
 
         threads = [
@@ -435,7 +460,7 @@ def process_commits(
                     logging.info(
                         "Stop requested — abandoning in-flight analyses (will retry)."
                     )
-                    break
+                    return
                 t.join(timeout=1.0)
 
     logging.info("Summary: %s", stats.summary())
@@ -457,8 +482,12 @@ def run_range(
     stop_event = threading.Event()
 
     def _handle_signal(signum, frame):
-        logging.info("Signal %s received — stopping …", signum)
+        logging.info(
+            "Signal %s received — stopping (Ctrl-C again to force quit) …", signum
+        )
         stop_event.set()
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -498,8 +527,12 @@ def run_daemon(
     stop_event = threading.Event()
 
     def _handle_signal(signum, frame):
-        logging.info("Signal %s received — shutting down …", signum)
+        logging.info(
+            "Signal %s received — shutting down (Ctrl-C again to force quit) …", signum
+        )
         stop_event.set()
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
