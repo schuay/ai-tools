@@ -11,13 +11,10 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import re
 import signal
-import subprocess
 import sys
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,7 +22,19 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 import tools.git as _git_mod
-from tools import git_blame, git_grep, git_log, git_show, git_show_file, read_around
+from tools import (
+    git_blame,
+    git_commit_diff,
+    git_commit_meta,
+    git_commits_since,
+    git_fetch,
+    git_grep,
+    git_log,
+    git_resolve,
+    git_show,
+    git_show_file,
+    read_around,
+)
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
@@ -76,56 +85,6 @@ Use the git tools (git_show, git_show_file, git_blame, git_log, git_grep, read_a
 to gather as much context as needed before writing your analysis.
 Write clearly and precisely. Avoid padding.\
 """
-
-# ── internal git plumbing ─────────────────────────────────────────────────────
-
-
-def _git(repo: Path, *args: str) -> str:
-    r = subprocess.run(
-        ["git", *args],
-        cwd=str(repo),
-        capture_output=True,
-        text=True,
-        errors="replace",
-    )
-    return r.stdout.strip() if r.returncode == 0 else f"Error: {r.stderr.strip()}"
-
-
-def git_fetch(repo: Path, remote: str = "origin") -> None:
-    result = _git(repo, "fetch", remote)
-    if result.startswith("Error:"):
-        logging.warning("fetch failed: %s", result)
-
-
-def get_tip(repo: Path, ref: str) -> str:
-    return _git(repo, "rev-parse", ref)
-
-
-def get_commits_since(repo: Path, since: str, until: str) -> list[str]:
-    """Return commit hashes from oldest to newest in (since, until]."""
-    out = _git(repo, "rev-list", "--reverse", f"{since}..{until}")
-    if out.startswith("Error:") or not out:
-        return []
-    return out.splitlines()
-
-
-def get_commit_diff(repo: Path, commit_hash: str) -> str:
-    return _git(repo, "show", commit_hash)
-
-
-def get_commit_meta(repo: Path, commit_hash: str) -> dict[str, str]:
-    fmt = "%H%n%ae%n%ci%n%s"
-    out = _git(repo, "show", "-s", f"--format={fmt}", commit_hash)
-    lines = out.splitlines()
-    if len(lines) < 4:
-        return {"hash": commit_hash, "author": "", "date": "", "subject": ""}
-    return {
-        "hash": lines[0],
-        "author": lines[1],
-        "date": lines[2],
-        "subject": "\n".join(lines[3:]),
-    }
-
 
 # ── state management ──────────────────────────────────────────────────────────
 
@@ -293,7 +252,7 @@ def process_commits(
     logging.info("Processing %d new commit(s).", len(pending))
     for commit_hash in pending:
         logging.info("Evaluating %s …", commit_hash[:8])
-        diff = get_commit_diff(repo, commit_hash)
+        diff = git_commit_diff(commit_hash)
         try:
             interesting = is_interesting(diff, filter_model)
         except Exception as e:
@@ -306,7 +265,7 @@ def process_commits(
             continue
 
         logging.info("  → INTERESTING — analysing …")
-        meta = get_commit_meta(repo, commit_hash)
+        meta = git_commit_meta(commit_hash)
         try:
             analysis = analyse_commit(commit_hash, meta, analysis_model)
             out_path = write_output(output_dir, meta, analysis, repo)
@@ -330,9 +289,9 @@ def run_range(
     from_hash: str,
     to_hash: str,
 ) -> None:
-    from_ref = get_tip(repo, from_hash)
-    to_ref = get_tip(repo, to_hash)
-    commits = get_commits_since(repo, from_ref, to_ref)
+    from_ref = git_resolve(from_hash)
+    to_ref = git_resolve(to_hash)
+    commits = git_commits_since(from_ref, to_ref)
     logging.info(
         "Range %s..%s → %d commit(s)",
         from_hash[:8] if len(from_hash) > 8 else from_hash,
@@ -365,8 +324,8 @@ def run_daemon(
 
     # First run: initialise daemon_tip to current tip without backfilling
     if state.daemon_tip is None:
-        git_fetch(repo, remote)
-        tip = get_tip(repo, remote_ref)
+        git_fetch(remote)
+        tip = git_resolve(remote_ref)
         if tip.startswith("Error:"):
             logging.error("Cannot resolve %s: %s", remote_ref, tip)
             sys.exit(1)
@@ -376,8 +335,8 @@ def run_daemon(
     logging.info("Polling %s every %ds …", remote_ref, poll_seconds)
     while not stop_event.is_set():
         try:
-            git_fetch(repo, remote)
-            tip = get_tip(repo, remote_ref)
+            git_fetch(remote)
+            tip = git_resolve(remote_ref)
             daemon_tip = state.daemon_tip
 
             if tip == daemon_tip:
@@ -385,7 +344,7 @@ def run_daemon(
             elif tip.startswith("Error:"):
                 logging.warning("Could not resolve %s: %s", remote_ref, tip)
             else:
-                commits = get_commits_since(repo, daemon_tip, tip)
+                commits = git_commits_since(daemon_tip, tip)
                 if commits:
                     process_commits(
                         commits, repo, output_dir, state, filter_model, analysis_model
