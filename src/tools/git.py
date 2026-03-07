@@ -79,13 +79,22 @@ def git_grep(
     return out
 
 
-def git_show(commit_hash: str, line: int | None = None, context: int = 80) -> str:
-    """Show the diff and metadata for a git commit in the repository.
+def git_show(
+    commit_hash: str,
+    file_path: str | None = None,
+    line: int | None = None,
+    context: int = 80,
+) -> str:
+    """Show a git commit or a file's content at a given commit.
 
+    commit_hash: the git commit hash
+    file_path: if given, show the content of this file at the commit (relative to repo root);
+               if omitted, show the full commit diff and metadata
     line: if given, centre the output on this 1-based line number and show `context` lines around it
     context: lines to show before and after `line` (default 80); when line is not given, limits total output lines
     """
-    out = _git(["git", "show", commit_hash])
+    cmd = ["git", "show", f"{commit_hash}:{file_path}" if file_path else commit_hash]
+    out = _git(cmd)
     if out.startswith("Error:"):
         return out
     if line is not None:
@@ -95,30 +104,6 @@ def git_show(commit_hash: str, line: int | None = None, context: int = 80) -> st
         return (
             "".join(lines[:context])
             + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
-        )
-    return out
-
-
-def git_show_file(
-    commit_hash: str, file_path: str, line: int | None = None, context: int = 20
-) -> str:
-    """Show the content of a file as it existed at a given commit in the repository.
-
-    commit_hash: the git commit hash
-    file_path: path relative to the repo root
-    line: if given, centre the output on this 1-based line number and show `context` lines around it
-    context: lines to show before and after `line` (default 20); ignored when line is not given
-    """
-    out = _git(["git", "show", f"{commit_hash}:{file_path}"])
-    if out.startswith("Error:"):
-        return out
-    if line is not None:
-        return trim_to_context(out, line, context)
-    lines = out.splitlines(keepends=True)
-    if len(lines) > 150:
-        return (
-            "".join(lines[:150])
-            + f"\n[truncated — {len(lines) - 150} more lines; use line= to navigate]"
         )
     return out
 
@@ -202,11 +187,6 @@ def git_commits_since(since: str, until: str) -> list[str]:
     if out.startswith("Error:") or not out:
         return []
     return out.splitlines()
-
-
-def git_commit_diff(commit_hash: str) -> str:
-    """Return the full diff+metadata for a commit (untruncated)."""
-    return _git(["git", "show", commit_hash])
 
 
 def git_commit_meta(commit_hash: str) -> dict[str, str]:

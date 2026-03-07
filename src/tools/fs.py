@@ -97,7 +97,7 @@ def preview_diff(path: str, search: str, replace: str) -> str:
         return (
             f"Error: could not locate the search block in {path}.\n"
             "Tips: ensure indentation is exact, add more surrounding context lines,\n"
-            "or verify the text against the actual file with read_around / git_show_file."
+            "or verify the text against the actual file with read_around / git_show."
         )
 
     start, end = match
@@ -221,7 +221,7 @@ def edit_file(path: str, search: str, replace: str) -> str:
         return (
             f"Error: could not locate the search block in {path}.\n"
             "Tips: ensure indentation is exact, add more surrounding context lines,\n"
-            "or verify the text against the actual file with read_around / git_show_file."
+            "or verify the text against the actual file with read_around / git_show."
         )
 
     start, end = match

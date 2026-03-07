@@ -23,7 +23,6 @@ from tools import (
     git_blame,
     git_log,
     git_show,
-    git_show_file,
     read_around,
     web_fetch,
     web_search,
@@ -114,7 +113,7 @@ def run(query: str, stdin_data: str) -> str:
     if os.environ.get("TAVILY_API_KEY"):
         tools = [web_search] + tools
     if in_git_repo():
-        tools = [git_show, git_show_file, git_blame, git_log, read_around] + tools
+        tools = [git_show, git_blame, git_log, read_around] + tools
 
     human_content = query
     if stdin_data:

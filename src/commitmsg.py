@@ -14,7 +14,7 @@ import sys
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from tools import git_blame, git_log, git_show, git_show_file, read_around
+from tools import git_blame, git_log, git_show, read_around
 
 # ── model ─────────────────────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ Format:
 
 Output ONLY the commit message — no commentary, no markdown fences, no preamble.
 
-Use git tools (git_show_file, read_around, git_blame, git_log) when you need more
+Use git tools (git_show, read_around, git_blame, git_log) when you need more
 context to understand the purpose or intent of a change.\
 """
 
@@ -78,7 +78,7 @@ def run() -> str:
     else:
         diff_content = diff
 
-    tools = [git_show_file, read_around, git_blame, git_log, git_show]
+    tools = [git_show, read_around, git_blame, git_log]
     model = init_chat_model(MODEL_ID, **MODEL_KWARGS).bind_tools(tools)
     tool_map = {fn.__name__: fn for fn in tools}
 
