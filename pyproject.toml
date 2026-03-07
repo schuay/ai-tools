@@ -21,6 +21,9 @@ dependencies = [
     "platformdirs>=4.0",
     "trafilatura>=2.0.0",
     "langchain-mcp-adapters>=0.2.1",
+    "langchain-qdrant>=0.2.0",
+    "qdrant-client>=1.12.0",
+    "fastmcp>=2.0.0",
 ]
 
 [project.scripts]
@@ -28,8 +31,10 @@ agent = "cli:main"
 qq = "qq:main"
 commitmsg = "commitmsg:main"
 repowatcher = "repowatcher:main"
+memorize = "memorize:main"
+memory-mcp = "memory_mcp:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["cli", "commitmsg", "graph", "qq", "repowatcher", "session"]
+py-modules = ["cli", "commitmsg", "graph", "memorize", "memory_mcp", "qq", "repowatcher", "session"]
 packages = ["tools"]
