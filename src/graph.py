@@ -26,7 +26,6 @@ from tools import (
     git_grep,
     git_log,
     git_show,
-    git_show_file,
     list_dir,
     read_around,
     web_fetch,
@@ -73,7 +72,7 @@ Read before concluding. Use the available tools to examine actual code — diffs
 surrounding context, blame history — before forming opinions. Never speculate about
 what a function does when you can read it.
 
-Explore systematically. Use read_around and git_show_file to build a full picture:
+Explore systematically. Use read_around and git_show to build a full picture:
 callers, callees, related types, invariants established elsewhere. Follow data
 structures and control flow as far as needed for a grounded answer. Use git_blame
 to understand when and why something was introduced.
@@ -100,7 +99,7 @@ on correctness or safety.
 ## Making changes
 
 You can propose edits to files using the edit_file tool. Always read the
-target region first (read_around or git_show_file) and copy the search block
+target region first (read_around or git_show) and copy the search block
 verbatim — include 3-5 lines of unchanged context on each side to uniquely
 anchor the location. The user will review a diff and approve or reject before
 any change is written.
@@ -168,7 +167,6 @@ def make_agent(
         grep_files,
         git_grep,
         git_show,
-        git_show_file,
         git_blame,
         git_log,
         read_around,

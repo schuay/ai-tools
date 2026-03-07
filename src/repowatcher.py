@@ -24,7 +24,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 import tools.git as _git_mod
 from tools import (
     git_blame,
-    git_commit_diff,
     git_commit_meta,
     git_commits_since,
     git_fetch,
@@ -32,7 +31,6 @@ from tools import (
     git_log,
     git_resolve,
     git_show,
-    git_show_file,
     read_around,
 )
 
@@ -81,7 +79,7 @@ Any risks, gotchas, or things reviewers should watch for?
 Does the commit message accurately capture the intent and scope?
 Note any gaps or misleading aspects.
 
-Use the git tools (git_show, git_show_file, git_blame, git_log, git_grep, read_around)
+Use the git tools (git_show, git_blame, git_log, git_grep, read_around)
 to gather as much context as needed before writing your analysis.
 Write clearly and precisely. Avoid padding.\
 """
@@ -183,7 +181,7 @@ def is_interesting(diff: str, filter_model) -> bool:
 
 
 def analyse_commit(commit_hash: str, meta: dict, analysis_model) -> str:
-    tools = [git_show, git_show_file, git_blame, git_log, git_grep, read_around]
+    tools = [git_show, git_blame, git_log, git_grep, read_around]
     user_prompt = (
         f"Analyse commit {commit_hash}.\n\n"
         f"Subject: {meta['subject']}\n"
@@ -252,7 +250,7 @@ def process_commits(
     logging.info("Processing %d new commit(s).", len(pending))
     for commit_hash in pending:
         logging.info("Evaluating %s …", commit_hash[:8])
-        diff = git_commit_diff(commit_hash)
+        diff = git_show(commit_hash, context=10_000)
         try:
             interesting = is_interesting(diff, filter_model)
         except Exception as e:
