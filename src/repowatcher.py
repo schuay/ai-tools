@@ -43,7 +43,7 @@ from tools import (
 DEFAULT_MODEL = "google_genai:gemini-3.1-pro-preview"
 FILTER_MODEL = "google_genai:gemini-3-flash-preview"
 MODEL_KWARGS = {"include_thoughts": True, "thinking_level": "low"}
-MAX_TOOL_OUTPUT = 8_000  # chars; tool results are echoed on every subsequent turn
+MAX_TOOL_OUTPUT = 50_000  # chars; safety cap for runaway tool output
 
 FILTER_SYSTEM = """\
 You are a senior engineer triaging git commits to decide if they warrant deeper analysis.
