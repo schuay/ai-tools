@@ -69,7 +69,21 @@ def search_v8_memory(
 ) -> str:
     """Search the V8 engineering knowledge base for relevant insights.
 
-    query: natural language description of what you're looking for
+    Call this BEFORE writing or modifying V8 code, not only when stuck.
+    Run 2-3 targeted queries from different angles rather than one broad one.
+    Always pass subsystem= when the code context makes it clear — it cuts noise
+    significantly. Prefer specific, problem-shaped queries over generic keywords.
+
+    Good queries:
+      search_v8_memory("osr entry requirements in Maglev", subsystem="maglev")
+      search_v8_memory("write barrier elision conditions", subsystem="gc")
+      search_v8_memory("feedback vector slot kinds for call ICs", subsystem="ic")
+      search_v8_memory("Turbofan deopt on polymorphic call sites", subsystem="turbofan")
+      search_v8_memory("MinorMS handling of large objects during scavenge", subsystem="scavenger")
+
+    Bad queries: "GC", "compiler", "how does V8 work", "optimization"
+
+    query: specific technical question or description of what you're looking for
     subsystem: optional filter — one of: gc, scavenger, minorms, ignition,
                maglev, turbofan, turboshaft, liftoff, wasm, ic, builtins,
                csa, torque, parser, api, runtime, sandbox, profiler, debug
