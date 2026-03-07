@@ -16,6 +16,7 @@ import re
 import signal
 import sys
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,6 +56,9 @@ A commit is NOT interesting if it:
 - Bumps a version number or lockfile with no logic change
 - Adds/updates comments or documentation only
 - Is a trivial typo fix or rename with no functional effect
+- Concerns only architectures loong64, ppc, s390, mips64, riscv
+- Is a "Update V8 DEPS" commit
+- Is a revert
 
 Reply with EXACTLY one word: INTERESTING or SKIP.
 No explanation, no punctuation, nothing else.\
@@ -68,7 +72,8 @@ representation, IC system, builtins, CSA/Torque, and the broader Blink/Node.js
 integration context.
 
 Your task: write a concise expert commentary on a git commit, as you would in a
-technical discussion with a fellow V8 engineer. Do NOT repeat or paraphrase the
+technical discussion with a fellow V8 engineer. Start with a max 2 sentence summary
+of the commit contents. Otherwise, do NOT repeat or paraphrase the
 commit message — assume the reader has already read it. Focus entirely on what
 the commit message doesn't say: the broader context, the subsystem implications,
 related past work, subtle risks, or why this matters.
@@ -126,6 +131,51 @@ class State:
         tmp.replace(self.path)
 
 
+# ── stats ─────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _RunStats:
+    interesting: int = 0
+    skipped: int = 0
+    failed: int = 0
+    filter_tokens: int = 0
+    analysis_tokens: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def record(
+        self,
+        *,
+        interesting: bool = False,
+        skipped: bool = False,
+        failed: bool = False,
+        filter_tokens: int = 0,
+        analysis_tokens: int = 0,
+    ) -> None:
+        with self._lock:
+            if interesting:
+                self.interesting += 1
+            if skipped:
+                self.skipped += 1
+            if failed:
+                self.failed += 1
+            self.filter_tokens += filter_tokens
+            self.analysis_tokens += analysis_tokens
+
+    @property
+    def total_tokens(self) -> int:
+        return self.filter_tokens + self.analysis_tokens
+
+    def summary(self) -> str:
+        total = self.interesting + self.skipped + self.failed
+        return (
+            f"evaluated={total}  interesting={self.interesting}"
+            f"  skip={self.skipped}  failed={self.failed}"
+            f"  tokens={self.total_tokens:,}"
+            f" (filter={self.filter_tokens:,} analysis={self.analysis_tokens:,})"
+        )
+
+
 # ── LLM helpers ───────────────────────────────────────────────────────────────
 
 
@@ -141,18 +191,27 @@ def _extract_text(content: object) -> str:
     return str(content)
 
 
-def _run_agent(model, tools: list, system_prompt: str, user_prompt: str) -> str:
+def _token_count(msg: AIMessage) -> int:
+    m = getattr(msg, "usage_metadata", None)
+    if isinstance(m, dict):
+        return m.get("total_tokens", 0)
+    return 0
+
+
+def _run_agent(model, tools: list, system_prompt: str, user_prompt: str) -> tuple[str, int]:
     tool_map = {fn.__name__: fn for fn in tools}
     bound = model.bind_tools(tools)
     messages: list = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt),
     ]
+    total_tokens = 0
     while True:
         response: AIMessage = bound.invoke(messages)
+        total_tokens += _token_count(response)
         messages.append(response)
         if not response.tool_calls:
-            return _extract_text(response.content).strip()
+            return _extract_text(response.content).strip(), total_tokens
         for tc in response.tool_calls:
             try:
                 result = tool_map[tc["name"]](**tc["args"])
@@ -166,7 +225,7 @@ def _run_agent(model, tools: list, system_prompt: str, user_prompt: str) -> str:
 DIFF_LIMIT = 20_000
 
 
-def is_interesting(diff: str, filter_model) -> bool:
+def is_interesting(diff: str, filter_model) -> tuple[bool, int]:
     if len(diff) > DIFF_LIMIT:
         diff = diff[:DIFF_LIMIT] + f"\n… (truncated at {DIFF_LIMIT} chars)"
     response = filter_model.invoke(
@@ -176,10 +235,10 @@ def is_interesting(diff: str, filter_model) -> bool:
         ]
     )
     verdict = _extract_text(response.content).strip().upper()
-    return verdict.startswith("INTERESTING")
+    return verdict.startswith("INTERESTING"), _token_count(response)
 
 
-def analyse_commit(commit_hash: str, meta: dict, analysis_model) -> str:
+def analyse_commit(commit_hash: str, meta: dict, analysis_model) -> tuple[str, int]:
     tools = [git_show, git_blame, git_log, git_grep, read_around]
     user_prompt = (
         f"Analyse commit {commit_hash}.\n\n"
@@ -239,30 +298,38 @@ def _process_one(
     state: State,
     filter_model,
     analysis_model,
+    stats: _RunStats,
 ) -> None:
     short = commit_hash[:8]
     logging.info("Evaluating %s …", short)
     diff = git_show(commit_hash, context=10_000)
     try:
-        interesting = is_interesting(diff, filter_model)
+        interesting, filter_tok = is_interesting(diff, filter_model)
     except Exception as e:
         logging.warning("Filter failed for %s: %s — skipping", short, e)
+        stats.record(failed=True)
         return
 
     if not interesting:
-        logging.info("%s → SKIP", short)
+        logging.info("%s → SKIP  [filter: %d tok]", short, filter_tok)
+        stats.record(skipped=True, filter_tokens=filter_tok)
         state.mark_processed(commit_hash)
         return
 
     logging.info("%s → INTERESTING — analysing …", short)
     meta = git_commit_meta(commit_hash)
     try:
-        analysis = analyse_commit(commit_hash, meta, analysis_model)
+        analysis, analysis_tok = analyse_commit(commit_hash, meta, analysis_model)
         out_path = write_output(output_dir, meta, analysis, repo)
-        logging.info("%s → written: %s", short, out_path)
+        logging.info(
+            "%s → written: %s  [filter: %d tok  analysis: %d tok]",
+            short, out_path, filter_tok, analysis_tok,
+        )
+        stats.record(interesting=True, filter_tokens=filter_tok, analysis_tokens=analysis_tok)
         state.mark_processed(commit_hash)
     except Exception as e:
         logging.warning("%s → analysis failed: %s — will retry", short, e)
+        stats.record(failed=True, filter_tokens=filter_tok)
 
 
 def process_commits(
@@ -288,38 +355,47 @@ def process_commits(
         "Processing %d new commit(s) with %d worker(s).", len(pending), workers
     )
 
+    stats = _RunStats()
+
     if workers <= 1:
         for commit_hash in pending:
             if _stopped():
-                return
-            _process_one(commit_hash, repo, output_dir, state, filter_model, analysis_model)
-        return
+                break
+            _process_one(
+                commit_hash, repo, output_dir, state, filter_model, analysis_model, stats
+            )
+    else:
+        # Parallel path: daemon threads so Ctrl-C exits immediately.
+        q: queue.Queue = queue.Queue()
+        for c in pending:
+            q.put(c)
 
-    # Parallel path: daemon threads so Ctrl-C exits immediately.
-    q: queue.Queue = queue.Queue()
-    for c in pending:
-        q.put(c)
+        def _worker() -> None:
+            while not _stopped():
+                try:
+                    commit_hash = q.get_nowait()
+                except queue.Empty:
+                    return
+                _process_one(
+                    commit_hash, repo, output_dir, state, filter_model, analysis_model, stats
+                )
 
-    def _worker() -> None:
-        while not _stopped():
-            try:
-                commit_hash = q.get_nowait()
-            except queue.Empty:
-                return
-            _process_one(commit_hash, repo, output_dir, state, filter_model, analysis_model)
+        threads = [
+            threading.Thread(target=_worker, daemon=True)
+            for _ in range(min(workers, len(pending)))
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            while t.is_alive():
+                if _stopped():
+                    logging.info(
+                        "Stop requested — abandoning in-flight analyses (will retry)."
+                    )
+                    break
+                t.join(timeout=1.0)
 
-    threads = [
-        threading.Thread(target=_worker, daemon=True)
-        for _ in range(min(workers, len(pending)))
-    ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        while t.is_alive():
-            if _stopped():
-                logging.info("Stop requested — abandoning in-flight analyses (will retry).")
-                return
-            t.join(timeout=1.0)
+    logging.info("Summary: %s", stats.summary())
 
 
 # ── modes ─────────────────────────────────────────────────────────────────────
@@ -354,7 +430,14 @@ def run_range(
         len(commits),
     )
     process_commits(
-        commits, repo, output_dir, state, filter_model, analysis_model, workers, stop_event
+        commits,
+        repo,
+        output_dir,
+        state,
+        filter_model,
+        analysis_model,
+        workers,
+        stop_event,
     )
 
 
