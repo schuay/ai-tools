@@ -505,7 +505,7 @@ def cmd_search(
 
 
 def cmd_list(
-    client: QdrantClient, subsystem: str | None, type_: str | None, limit: int
+    client: QdrantClient, subsystem: str | None, type_: str | None, limit: int | None
 ) -> None:
     qdrant_filter = None
     must = []
@@ -518,19 +518,28 @@ def cmd_list(
     if must:
         qdrant_filter = Filter(must=must)
 
-    points, _ = client.scroll(
-        COLLECTION,
-        with_payload=True,
-        with_vectors=False,
-        limit=limit,
-        scroll_filter=qdrant_filter,
-    )
-    for p in points:
-        m = (p.payload or {}).get("metadata", {})
-        snippet = (p.payload or {}).get("page_content", "")[:80].replace("\n", " ")
-        print(
-            f"{p.id}  {m.get('date', '')}  [{', '.join(m.get('subsystems', []))}]  {m.get('type', '')}  {snippet}"
+    shown = 0
+    offset = None
+    while True:
+        batch, offset = client.scroll(
+            COLLECTION,
+            with_payload=True,
+            with_vectors=False,
+            limit=100,
+            offset=offset,
+            scroll_filter=qdrant_filter,
         )
+        for p in batch:
+            m = (p.payload or {}).get("metadata", {})
+            snippet = (p.payload or {}).get("page_content", "")[:80].replace("\n", " ")
+            print(
+                f"{p.id}  {m.get('date', '')}  [{', '.join(m.get('subsystems', []))}]  {m.get('type', '')}  {snippet}"
+            )
+            shown += 1
+            if limit is not None and shown >= limit:
+                return
+        if offset is None:
+            break
 
 
 def cmd_delete(client: QdrantClient, point_id: str) -> None:
@@ -602,7 +611,10 @@ def main() -> None:
     parser.add_argument("--subsystem", help="Filter by subsystem")
     parser.add_argument("--type", dest="type_", help="Filter by type (for --list)")
     parser.add_argument(
-        "--limit", type=int, default=5, help="Result limit (default: 5)"
+        "--limit",
+        type=int,
+        default=None,
+        help="Result limit (default: 5 for --search, unlimited for --list)",
     )
 
     # Positional: specific files to process
@@ -637,7 +649,7 @@ def main() -> None:
     store = _make_store(client)
 
     if args.search:
-        cmd_search(client, store, args.search, args.subsystem, args.limit)
+        cmd_search(client, store, args.search, args.subsystem, args.limit or 5)
         return
 
     if args.list:
