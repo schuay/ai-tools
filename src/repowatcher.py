@@ -242,14 +242,21 @@ def _run_agent(
         HumanMessage(content=user_prompt),
     ]
     total_tokens = 0
+    turn = 0
     while True:
         if stop_event and stop_event.is_set():
             raise InterruptedError("stop requested")
+        history_chars = sum(len(str(m.content)) for m in messages)
+        logging.debug("turn=%d  history=%d chars", turn, history_chars)
         response: AIMessage = _invoke_with_backoff(bound.invoke, messages)
-        total_tokens += _token_count(response)
+        turn_tokens = _token_count(response)
+        total_tokens += turn_tokens
         messages.append(response)
         if not response.tool_calls:
+            logging.debug("turn=%d  tokens=%d  → done", turn, turn_tokens)
             return _extract_text(response.content).strip(), total_tokens
+        calls = ", ".join(tc["name"] for tc in response.tool_calls)
+        logging.debug("turn=%d  tokens=%d  → calls: %s", turn, turn_tokens, calls)
         for tc in response.tool_calls:
             try:
                 result = str(tool_map[tc["name"]](**tc["args"]))
@@ -260,7 +267,9 @@ def _run_agent(
                     result[:MAX_TOOL_OUTPUT]
                     + f"\n… (truncated at {MAX_TOOL_OUTPUT} chars)"
                 )
+            logging.debug("  %s → %d chars", tc["name"], len(result))
             messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
+        turn += 1
 
 
 # ── filter & analysis ─────────────────────────────────────────────────────────
