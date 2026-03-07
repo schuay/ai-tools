@@ -6,7 +6,6 @@ Exposes two tools to Claude Code and other MCP clients:
 
 Configuration (environment variables):
   V8_MEMORY_DB_PATH   path to the Qdrant DB directory (required)
-  GOOGLE_API_KEY      Google AI API key (required)
 
 Usage:
     memory-mcp                          # stdio (default, for Claude Code)
@@ -29,12 +28,11 @@ import sys
 from pathlib import Path
 
 from fastmcp import FastMCP
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-from memorize import COLLECTION, EMBEDDING_MODEL, SUBSYSTEMS, TYPES
+from memorize import COLLECTION, SUBSYSTEMS, TYPES, _FastEmbeddings
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 
@@ -44,8 +42,9 @@ if not _db_path:
     sys.exit(1)
 
 _client = QdrantClient(path=_db_path)
-_embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
-_store = QdrantVectorStore(client=_client, collection_name=COLLECTION, embedding=_embeddings)
+_store = QdrantVectorStore(
+    client=_client, collection_name=COLLECTION, embedding=_FastEmbeddings()
+)
 
 mcp = FastMCP(
     "v8-memory",
@@ -81,13 +80,17 @@ def search_v8_memory(
     limit = min(limit, 20)
     must = []
     if subsystem:
-        must.append(FieldCondition(key="metadata.subsystems", match=MatchValue(value=subsystem)))
+        must.append(
+            FieldCondition(key="metadata.subsystems", match=MatchValue(value=subsystem))
+        )
     if type:
         must.append(FieldCondition(key="metadata.type", match=MatchValue(value=type)))
     qdrant_filter = Filter(must=must) if must else None
 
     try:
-        results = _store.similarity_search_with_score(query, k=limit, filter=qdrant_filter)
+        results = _store.similarity_search_with_score(
+            query, k=limit, filter=qdrant_filter
+        )
     except Exception as e:
         return f"Search error: {e}"
 
@@ -124,7 +127,11 @@ def list_memory_info() -> str:
 
     while True:
         points, offset = _client.scroll(
-            COLLECTION, with_payload=True, with_vectors=False, limit=200, offset=offset,
+            COLLECTION,
+            with_payload=True,
+            with_vectors=False,
+            limit=200,
+            offset=offset,
         )
         for p in points:
             m = (p.payload or {}).get("metadata", {})
@@ -142,13 +149,20 @@ def list_memory_info() -> str:
     if dates:
         lines.append(f"Date range: {min(dates)} → {max(dates)}")
     if subsystem_counts:
-        lines.append("\nSubsystems: " + ", ".join(
-            f"{s}({n})" for s, n in sorted(subsystem_counts.items(), key=lambda x: -x[1])
-        ))
+        lines.append(
+            "\nSubsystems: "
+            + ", ".join(
+                f"{s}({n})"
+                for s, n in sorted(subsystem_counts.items(), key=lambda x: -x[1])
+            )
+        )
     if type_counts:
-        lines.append("Types: " + ", ".join(
-            f"{t}({n})" for t, n in sorted(type_counts.items(), key=lambda x: -x[1])
-        ))
+        lines.append(
+            "Types: "
+            + ", ".join(
+                f"{t}({n})" for t, n in sorted(type_counts.items(), key=lambda x: -x[1])
+            )
+        )
     return "\n".join(lines)
 
 
