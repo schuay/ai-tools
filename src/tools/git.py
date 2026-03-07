@@ -179,6 +179,51 @@ def git_log(
     return _git(cmd)
 
 
+# ── plumbing (non-tool helpers used by repowatcher etc.) ──────────────────────
+
+
+def git_fetch(remote: str = "origin") -> None:
+    """Fetch from a remote in REPO_ROOT (silently ignores errors)."""
+    result = _git(["git", "fetch", remote])
+    if result.startswith("Error:"):
+        import logging
+
+        logging.warning("git fetch %s failed: %s", remote, result)
+
+
+def git_resolve(ref: str) -> str:
+    """Resolve a ref (branch, tag, hash) to a full commit hash."""
+    return _git(["git", "rev-parse", ref])
+
+
+def git_commits_since(since: str, until: str) -> list[str]:
+    """Return commit hashes in (since, until], oldest first."""
+    out = _git(["git", "rev-list", "--reverse", f"{since}..{until}"])
+    if out.startswith("Error:") or not out:
+        return []
+    return out.splitlines()
+
+
+def git_commit_diff(commit_hash: str) -> str:
+    """Return the full diff+metadata for a commit (untruncated)."""
+    return _git(["git", "show", commit_hash])
+
+
+def git_commit_meta(commit_hash: str) -> dict[str, str]:
+    """Return a dict with keys: hash, author, date, subject."""
+    fmt = "%H%n%ae%n%ci%n%s"
+    out = _git(["git", "show", "-s", f"--format={fmt}", commit_hash])
+    lines = out.splitlines()
+    if len(lines) < 4:
+        return {"hash": commit_hash, "author": "", "date": "", "subject": ""}
+    return {
+        "hash": lines[0],
+        "author": lines[1],
+        "date": lines[2],
+        "subject": "\n".join(lines[3:]),
+    }
+
+
 def read_around(file_path: str, line: int, context: int = 20) -> str:
     """Read lines around a given line number in a file inside the repository.
 
