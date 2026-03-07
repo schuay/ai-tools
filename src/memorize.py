@@ -374,12 +374,18 @@ class _State:
 
 def run_files(
     paths: list[Path],
+    db_path: Path,
     client: QdrantClient,
     store: QdrantVectorStore,
     verbose: bool = False,
 ) -> None:
+    state = _State(db_path / "memorize_state.json")
     for path in paths:
+        if path.name in state.processed:
+            logging.info("%s — already processed, skipping", path.name)
+            continue
         ingest_file(path, client, store, verbose=verbose)
+        state.mark(path.name)
 
 
 def run_watch(
@@ -641,7 +647,11 @@ def main() -> None:
     # Process / watch modes
     if args.files:
         run_files(
-            [p.resolve() for p in args.files], client, store, verbose=args.verbose
+            [p.resolve() for p in args.files],
+            db_path,
+            client,
+            store,
+            verbose=args.verbose,
         )
     elif args.output_dir:
         output_dir = args.output_dir.resolve()
