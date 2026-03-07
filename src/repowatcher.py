@@ -276,9 +276,10 @@ def _run_agent(
 
 
 def is_interesting(meta: dict, filter_model) -> tuple[bool, int]:
-    prompt = (
-        f"subject: {meta['subject']}\nauthor: {meta['author']}\ndate: {meta['date']}"
-    )
+    msg = meta["subject"]
+    if meta.get("body"):
+        msg += "\n\n" + meta["body"]
+    prompt = f"author: {meta['author']}\ndate: {meta['date']}\n\n{msg}"
     response = _invoke_with_backoff(
         filter_model.invoke,
         [

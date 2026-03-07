@@ -190,17 +190,24 @@ def git_commits_since(since: str, until: str) -> list[str]:
 
 
 def git_commit_meta(commit_hash: str) -> dict[str, str]:
-    """Return a dict with keys: hash, author, date, subject."""
-    fmt = "%H%n%ae%n%ci%n%s"
+    """Return a dict with keys: hash, author, date, subject, body."""
+    fmt = "%H%n%ae%n%ci%n%s%n%n%b"
     out = _git(["git", "show", "-s", f"--format={fmt}", commit_hash])
     lines = out.splitlines()
     if len(lines) < 4:
-        return {"hash": commit_hash, "author": "", "date": "", "subject": ""}
+        return {
+            "hash": commit_hash,
+            "author": "",
+            "date": "",
+            "subject": "",
+            "body": "",
+        }
     return {
         "hash": lines[0],
         "author": lines[1],
         "date": lines[2],
-        "subject": "\n".join(lines[3:]),
+        "subject": lines[3],
+        "body": "\n".join(lines[4:]).strip(),
     }
 
 
