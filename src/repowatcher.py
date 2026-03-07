@@ -313,7 +313,9 @@ def process_commits(
             logging.info("  → written: %s", out_path)
             state.mark_processed(commit_hash)
         except Exception as e:
-            logging.warning("  → analysis failed for %s: %s — will retry", commit_hash[:8], e)
+            logging.warning(
+                "  → analysis failed for %s: %s — will retry", commit_hash[:8], e
+            )
 
 
 # ── modes ─────────────────────────────────────────────────────────────────────
@@ -331,7 +333,12 @@ def run_range(
     from_ref = get_tip(repo, from_hash)
     to_ref = get_tip(repo, to_hash)
     commits = get_commits_since(repo, from_ref, to_ref)
-    logging.info("Range %s..%s → %d commit(s)", from_hash[:8] if len(from_hash) > 8 else from_hash, to_hash[:8] if len(to_hash) > 8 else to_hash, len(commits))
+    logging.info(
+        "Range %s..%s → %d commit(s)",
+        from_hash[:8] if len(from_hash) > 8 else from_hash,
+        to_hash[:8] if len(to_hash) > 8 else to_hash,
+        len(commits),
+    )
     process_commits(commits, repo, output_dir, state, filter_model, analysis_model)
 
 
@@ -399,16 +406,53 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Watch a git repo for new commits and analyse interesting ones."
     )
-    parser.add_argument("--repo", required=True, type=Path, help="Path to the git repository")
-    parser.add_argument("--output-dir", required=True, type=Path, help="Directory for analysis .md files")
-    parser.add_argument("--state-file", type=Path, help="Path to state JSON file (default: OUTPUT_DIR/state.json)")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Analysis model (default: {DEFAULT_MODEL})")
-    parser.add_argument("--branch", default="main", help="Branch to watch (default: main)")
-    parser.add_argument("--remote", default="origin", help="Remote name (default: origin)")
-    parser.add_argument("--poll", type=int, default=60, metavar="SECONDS", help="Poll interval in seconds (default: 60)")
-    parser.add_argument("--workers", type=int, default=1, help="Parallel workers (default: 1, currently unused)")
-    parser.add_argument("--range", dest="range_spec", metavar="FROM..TO", help="One-shot mode: process commits in FROM..TO range")
-    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument(
+        "--repo", required=True, type=Path, help="Path to the git repository"
+    )
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        type=Path,
+        help="Directory for analysis .md files",
+    )
+    parser.add_argument(
+        "--state-file",
+        type=Path,
+        help="Path to state JSON file (default: OUTPUT_DIR/state.json)",
+    )
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Analysis model (default: {DEFAULT_MODEL})",
+    )
+    parser.add_argument(
+        "--branch", default="main", help="Branch to watch (default: main)"
+    )
+    parser.add_argument(
+        "--remote", default="origin", help="Remote name (default: origin)"
+    )
+    parser.add_argument(
+        "--poll",
+        type=int,
+        default=60,
+        metavar="SECONDS",
+        help="Poll interval in seconds (default: 60)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Parallel workers (default: 1, currently unused)",
+    )
+    parser.add_argument(
+        "--range",
+        dest="range_spec",
+        metavar="FROM..TO",
+        help="One-shot mode: process commits in FROM..TO range",
+    )
+    parser.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -438,10 +482,14 @@ def main() -> None:
         # One-shot range mode
         parts = args.range_spec.split("..")
         if len(parts) != 2:
-            logging.error("--range must be in FROM..TO format, got: %s", args.range_spec)
+            logging.error(
+                "--range must be in FROM..TO format, got: %s", args.range_spec
+            )
             sys.exit(1)
         from_ref, to_ref = parts
-        run_range(repo, output_dir, state, filter_model, analysis_model, from_ref, to_ref)
+        run_range(
+            repo, output_dir, state, filter_model, analysis_model, from_ref, to_ref
+        )
     else:
         # Daemon mode
         run_daemon(
