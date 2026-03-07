@@ -178,7 +178,7 @@ def git_fetch(remote: str = "origin") -> None:
 
 def git_resolve(ref: str) -> str:
     """Resolve a ref (branch, tag, hash) to a full commit hash."""
-    return _git(["git", "rev-parse", ref])
+    return _git(["git", "rev-parse", ref]).strip()
 
 
 def git_commits_since(since: str, until: str) -> list[str]:
