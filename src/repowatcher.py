@@ -42,7 +42,8 @@ from tools import (
 
 DEFAULT_MODEL = "google_genai:gemini-3.1-pro-preview"
 FILTER_MODEL = "google_genai:gemini-3-flash-preview"
-MODEL_KWARGS = {"include_thoughts": True, "thinking_level": "medium"}
+MODEL_KWARGS = {"include_thoughts": True, "thinking_level": "low"}
+MAX_TOOL_OUTPUT = 8_000  # chars; tool results are echoed on every subsequent turn
 
 FILTER_SYSTEM = """\
 You are a senior engineer triaging git commits to decide if they warrant deeper analysis.
@@ -251,10 +252,15 @@ def _run_agent(
             return _extract_text(response.content).strip(), total_tokens
         for tc in response.tool_calls:
             try:
-                result = tool_map[tc["name"]](**tc["args"])
+                result = str(tool_map[tc["name"]](**tc["args"]))
             except Exception as e:
                 result = f"Error: {e}"
-            messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+            if len(result) > MAX_TOOL_OUTPUT:
+                result = (
+                    result[:MAX_TOOL_OUTPUT]
+                    + f"\n… (truncated at {MAX_TOOL_OUTPUT} chars)"
+                )
+            messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 
 
 # ── filter & analysis ─────────────────────────────────────────────────────────
