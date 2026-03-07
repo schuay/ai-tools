@@ -483,7 +483,6 @@ def cmd_search(
     store: QdrantVectorStore,
     query: str,
     subsystem: str | None,
-    limit: int,
 ) -> None:
     qdrant_filter = None
     if subsystem:
@@ -494,7 +493,7 @@ def cmd_search(
                 )
             ]
         )
-    results = store.similarity_search_with_score(query, k=limit, filter=qdrant_filter)
+    results = store.similarity_search_with_score(query, k=1000, filter=qdrant_filter)
     for doc, score in results:
         m = doc.metadata
         print(
@@ -504,9 +503,7 @@ def cmd_search(
         print(f"  {doc.page_content[:300].replace(chr(10), ' ')}")
 
 
-def cmd_list(
-    client: QdrantClient, subsystem: str | None, type_: str | None, limit: int | None
-) -> None:
+def cmd_list(client: QdrantClient, subsystem: str | None, type_: str | None) -> None:
     qdrant_filter = None
     must = []
     if subsystem:
@@ -518,7 +515,6 @@ def cmd_list(
     if must:
         qdrant_filter = Filter(must=must)
 
-    shown = 0
     offset = None
     while True:
         batch, offset = client.scroll(
@@ -535,9 +531,6 @@ def cmd_list(
             print(
                 f"{p.id}  {m.get('date', '')}  [{', '.join(m.get('subsystems', []))}]  {m.get('type', '')}  {snippet}"
             )
-            shown += 1
-            if limit is not None and shown >= limit:
-                return
         if offset is None:
             break
 
@@ -610,12 +603,6 @@ def main() -> None:
     # Filters used by --search and --list
     parser.add_argument("--subsystem", help="Filter by subsystem")
     parser.add_argument("--type", dest="type_", help="Filter by type (for --list)")
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help="Result limit (default: 5 for --search, unlimited for --list)",
-    )
 
     # Positional: specific files to process
     parser.add_argument("files", nargs="*", type=Path, help=".md files to process")
@@ -649,11 +636,11 @@ def main() -> None:
     store = _make_store(client)
 
     if args.search:
-        cmd_search(client, store, args.search, args.subsystem, args.limit or 5)
+        cmd_search(client, store, args.search, args.subsystem)
         return
 
     if args.list:
-        cmd_list(client, args.subsystem, args.type_, args.limit)
+        cmd_list(client, args.subsystem, args.type_)
         return
 
     # Process / watch modes
