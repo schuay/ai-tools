@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import concurrent.futures
 import json
 import logging
 import re
@@ -36,7 +37,7 @@ from tools import (
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
-DEFAULT_MODEL = "google_genai:gemini-2.5-pro-preview-03-25"
+DEFAULT_MODEL = "google_genai:gemini-3.1-pro-preview"
 FILTER_MODEL = "google_genai:gemini-3-flash-preview"
 MODEL_KWARGS = {"include_thoughts": True, "thinking_level": "medium"}
 
@@ -233,6 +234,39 @@ def write_output(output_dir: Path, meta: dict, analysis: str, repo: Path) -> Pat
 # ── batch processing ──────────────────────────────────────────────────────────
 
 
+def _process_one(
+    commit_hash: str,
+    repo: Path,
+    output_dir: Path,
+    state: State,
+    filter_model,
+    analysis_model,
+) -> None:
+    short = commit_hash[:8]
+    logging.info("Evaluating %s …", short)
+    diff = git_show(commit_hash, context=10_000)
+    try:
+        interesting = is_interesting(diff, filter_model)
+    except Exception as e:
+        logging.warning("Filter failed for %s: %s — skipping", short, e)
+        return
+
+    if not interesting:
+        logging.info("%s → SKIP", short)
+        state.mark_processed(commit_hash)
+        return
+
+    logging.info("%s → INTERESTING — analysing …", short)
+    meta = git_commit_meta(commit_hash)
+    try:
+        analysis = analyse_commit(commit_hash, meta, analysis_model)
+        out_path = write_output(output_dir, meta, analysis, repo)
+        logging.info("%s → written: %s", short, out_path)
+        state.mark_processed(commit_hash)
+    except Exception as e:
+        logging.warning("%s → analysis failed: %s — will retry", short, e)
+
+
 def process_commits(
     commits: list[str],
     repo: Path,
@@ -240,6 +274,7 @@ def process_commits(
     state: State,
     filter_model,
     analysis_model,
+    workers: int = 1,
 ) -> None:
     already = state.processed
     pending = [c for c in commits if c not in already]
@@ -247,32 +282,23 @@ def process_commits(
         logging.info("All %d commit(s) already processed.", len(commits))
         return
 
-    logging.info("Processing %d new commit(s).", len(pending))
-    for commit_hash in pending:
-        logging.info("Evaluating %s …", commit_hash[:8])
-        diff = git_show(commit_hash, context=10_000)
-        try:
-            interesting = is_interesting(diff, filter_model)
-        except Exception as e:
-            logging.warning("Filter failed for %s: %s — skipping", commit_hash[:8], e)
-            continue
-
-        if not interesting:
-            logging.info("  → SKIP (not interesting)")
-            state.mark_processed(commit_hash)
-            continue
-
-        logging.info("  → INTERESTING — analysing …")
-        meta = git_commit_meta(commit_hash)
-        try:
-            analysis = analyse_commit(commit_hash, meta, analysis_model)
-            out_path = write_output(output_dir, meta, analysis, repo)
-            logging.info("  → written: %s", out_path)
-            state.mark_processed(commit_hash)
-        except Exception as e:
-            logging.warning(
-                "  → analysis failed for %s: %s — will retry", commit_hash[:8], e
-            )
+    logging.info("Processing %d new commit(s) with %d worker(s).", len(pending), workers)
+    if workers <= 1:
+        for commit_hash in pending:
+            _process_one(commit_hash, repo, output_dir, state, filter_model, analysis_model)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(
+                    _process_one, c, repo, output_dir, state, filter_model, analysis_model
+                ): c
+                for c in pending
+            }
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logging.warning("Worker error for %s: %s", futures[future][:8], e)
 
 
 # ── modes ─────────────────────────────────────────────────────────────────────
@@ -286,6 +312,7 @@ def run_range(
     analysis_model,
     from_hash: str,
     to_hash: str,
+    workers: int = 1,
 ) -> None:
     from_ref = git_resolve(from_hash)
     to_ref = git_resolve(to_hash)
@@ -296,7 +323,7 @@ def run_range(
         to_hash[:8] if len(to_hash) > 8 else to_hash,
         len(commits),
     )
-    process_commits(commits, repo, output_dir, state, filter_model, analysis_model)
+    process_commits(commits, repo, output_dir, state, filter_model, analysis_model, workers)
 
 
 def run_daemon(
@@ -308,6 +335,7 @@ def run_daemon(
     remote: str,
     branch: str,
     poll_seconds: int,
+    workers: int = 1,
 ) -> None:
     stop_event = threading.Event()
 
@@ -345,7 +373,7 @@ def run_daemon(
                 commits = git_commits_since(daemon_tip, tip)
                 if commits:
                     process_commits(
-                        commits, repo, output_dir, state, filter_model, analysis_model
+                        commits, repo, output_dir, state, filter_model, analysis_model, workers
                     )
                 state.set_daemon_tip(tip)
         except Exception as e:
@@ -399,7 +427,7 @@ def main() -> None:
         "--workers",
         type=int,
         default=1,
-        help="Parallel workers (default: 1, currently unused)",
+        help="Number of commits to analyse in parallel (default: 1)",
     )
     parser.add_argument(
         "--range",
@@ -445,7 +473,8 @@ def main() -> None:
             sys.exit(1)
         from_ref, to_ref = parts
         run_range(
-            repo, output_dir, state, filter_model, analysis_model, from_ref, to_ref
+            repo, output_dir, state, filter_model, analysis_model, from_ref, to_ref,
+            workers=args.workers,
         )
     else:
         # Daemon mode
@@ -458,6 +487,7 @@ def main() -> None:
             remote=args.remote,
             branch=args.branch,
             poll_seconds=args.poll,
+            workers=args.workers,
         )
 
 
