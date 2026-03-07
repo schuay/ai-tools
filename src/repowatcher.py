@@ -12,10 +12,12 @@ import argparse
 import json
 import logging
 import queue
+import random
 import re
 import signal
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -198,7 +200,30 @@ def _token_count(msg: AIMessage) -> int:
     return 0
 
 
-def _run_agent(model, tools: list, system_prompt: str, user_prompt: str) -> tuple[str, int]:
+def _is_rate_limit(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(k in msg for k in ("429", "quota", "rate limit", "resource_exhausted", "exhausted"))
+
+
+def _invoke_with_backoff(fn, *args, max_retries: int = 8, **kwargs):
+    """Call fn(*args, **kwargs), retrying with exponential backoff on rate-limit errors."""
+    for attempt in range(max_retries):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            if not _is_rate_limit(e):
+                raise
+            wait = (2 ** attempt) + random.uniform(0, 1)
+            logging.warning(
+                "Rate limited — retrying in %.0fs (attempt %d/%d)", wait, attempt + 1, max_retries
+            )
+            time.sleep(wait)
+    raise RuntimeError(f"Rate limit persisted after {max_retries} retries")
+
+
+def _run_agent(
+    model, tools: list, system_prompt: str, user_prompt: str
+) -> tuple[str, int]:
     tool_map = {fn.__name__: fn for fn in tools}
     bound = model.bind_tools(tools)
     messages: list = [
@@ -207,7 +232,7 @@ def _run_agent(model, tools: list, system_prompt: str, user_prompt: str) -> tupl
     ]
     total_tokens = 0
     while True:
-        response: AIMessage = bound.invoke(messages)
+        response: AIMessage = _invoke_with_backoff(bound.invoke, messages)
         total_tokens += _token_count(response)
         messages.append(response)
         if not response.tool_calls:
@@ -228,11 +253,12 @@ DIFF_LIMIT = 20_000
 def is_interesting(diff: str, filter_model) -> tuple[bool, int]:
     if len(diff) > DIFF_LIMIT:
         diff = diff[:DIFF_LIMIT] + f"\n… (truncated at {DIFF_LIMIT} chars)"
-    response = filter_model.invoke(
+    response = _invoke_with_backoff(
+        filter_model.invoke,
         [
             SystemMessage(content=FILTER_SYSTEM),
             HumanMessage(content=f"<diff>\n{diff}\n</diff>"),
-        ]
+        ],
     )
     verdict = _extract_text(response.content).strip().upper()
     return verdict.startswith("INTERESTING"), _token_count(response)
@@ -323,9 +349,14 @@ def _process_one(
         out_path = write_output(output_dir, meta, analysis, repo)
         logging.info(
             "%s → written: %s  [filter: %d tok  analysis: %d tok]",
-            short, out_path, filter_tok, analysis_tok,
+            short,
+            out_path,
+            filter_tok,
+            analysis_tok,
         )
-        stats.record(interesting=True, filter_tokens=filter_tok, analysis_tokens=analysis_tok)
+        stats.record(
+            interesting=True, filter_tokens=filter_tok, analysis_tokens=analysis_tok
+        )
         state.mark_processed(commit_hash)
     except Exception as e:
         logging.warning("%s → analysis failed: %s — will retry", short, e)
@@ -362,7 +393,13 @@ def process_commits(
             if _stopped():
                 break
             _process_one(
-                commit_hash, repo, output_dir, state, filter_model, analysis_model, stats
+                commit_hash,
+                repo,
+                output_dir,
+                state,
+                filter_model,
+                analysis_model,
+                stats,
             )
     else:
         # Parallel path: daemon threads so Ctrl-C exits immediately.
@@ -377,7 +414,13 @@ def process_commits(
                 except queue.Empty:
                     return
                 _process_one(
-                    commit_hash, repo, output_dir, state, filter_model, analysis_model, stats
+                    commit_hash,
+                    repo,
+                    output_dir,
+                    state,
+                    filter_model,
+                    analysis_model,
+                    stats,
                 )
 
         threads = [
