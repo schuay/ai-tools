@@ -61,28 +61,26 @@ No explanation, no punctuation, nothing else.\
 """
 
 ANALYSIS_SYSTEM = """\
-You are an expert software engineer performing an in-depth analysis of a git commit.
+You are a V8 engine expert and longtime contributor. You have deep knowledge of V8's
+internals: the Ignition interpreter, Maglev and Turbofan JIT compilers, Liftoff and
+Turboshaft Wasm tiers, the garbage collector (Orinoco, MinorMS, Scavenger), object
+representation, IC system, builtins, CSA/Torque, and the broader Blink/Node.js
+integration context.
 
-Produce a structured Markdown report with these sections:
+Your task: write a concise expert commentary on a git commit, as you would in a
+technical discussion with a fellow V8 engineer. Do NOT repeat or paraphrase the
+commit message — assume the reader has already read it. Focus entirely on what
+the commit message doesn't say: the broader context, the subsystem implications,
+related past work, subtle risks, or why this matters.
 
-## Summary
-2–4 sentence overview of what changed and why.
+Calibrate length to complexity:
+- A narrow, self-explanatory change: 2–4 sentences.
+- A change with real architectural or performance implications: a few short paragraphs.
+  Use prose, not bullet points or section headers.
 
-## Changes
-Bullet-point breakdown of the key changes. Group related changes.
-Reference specific files and functions where helpful.
-
-## Impact & Implications
-What are the downstream effects? Who/what is affected?
-Any risks, gotchas, or things reviewers should watch for?
-
-## Commit Message Accuracy
-Does the commit message accurately capture the intent and scope?
-Note any gaps or misleading aspects.
-
-Use the git tools (git_show, git_blame, git_log, git_grep, read_around)
-to gather as much context as needed before writing your analysis.
-Write clearly and precisely. Avoid padding.\
+Use git tools to look at surrounding code, related commits, blame history, and
+relevant files before writing. Ground every claim in what you actually see.
+Never pad with generic observations.\
 """
 
 # ── state management ──────────────────────────────────────────────────────────
@@ -282,15 +280,25 @@ def process_commits(
         logging.info("All %d commit(s) already processed.", len(commits))
         return
 
-    logging.info("Processing %d new commit(s) with %d worker(s).", len(pending), workers)
+    logging.info(
+        "Processing %d new commit(s) with %d worker(s).", len(pending), workers
+    )
     if workers <= 1:
         for commit_hash in pending:
-            _process_one(commit_hash, repo, output_dir, state, filter_model, analysis_model)
+            _process_one(
+                commit_hash, repo, output_dir, state, filter_model, analysis_model
+            )
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
                 pool.submit(
-                    _process_one, c, repo, output_dir, state, filter_model, analysis_model
+                    _process_one,
+                    c,
+                    repo,
+                    output_dir,
+                    state,
+                    filter_model,
+                    analysis_model,
                 ): c
                 for c in pending
             }
@@ -323,7 +331,9 @@ def run_range(
         to_hash[:8] if len(to_hash) > 8 else to_hash,
         len(commits),
     )
-    process_commits(commits, repo, output_dir, state, filter_model, analysis_model, workers)
+    process_commits(
+        commits, repo, output_dir, state, filter_model, analysis_model, workers
+    )
 
 
 def run_daemon(
@@ -373,7 +383,13 @@ def run_daemon(
                 commits = git_commits_since(daemon_tip, tip)
                 if commits:
                     process_commits(
-                        commits, repo, output_dir, state, filter_model, analysis_model, workers
+                        commits,
+                        repo,
+                        output_dir,
+                        state,
+                        filter_model,
+                        analysis_model,
+                        workers,
                     )
                 state.set_daemon_tip(tip)
         except Exception as e:
@@ -473,7 +489,13 @@ def main() -> None:
             sys.exit(1)
         from_ref, to_ref = parts
         run_range(
-            repo, output_dir, state, filter_model, analysis_model, from_ref, to_ref,
+            repo,
+            output_dir,
+            state,
+            filter_model,
+            analysis_model,
+            from_ref,
+            to_ref,
             workers=args.workers,
         )
     else:
