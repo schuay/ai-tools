@@ -203,22 +203,29 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
 # ── curation agent ────────────────────────────────────────────────────────────
 
 
-def _curate(analysis_body: str) -> _Curation:
-    model = init_chat_model(CURATION_MODEL).with_structured_output(_Curation)
-    return model.invoke(
+def _curate(analysis_body: str) -> tuple[_Curation, dict]:
+    model = init_chat_model(CURATION_MODEL).with_structured_output(
+        _Curation, include_raw=True
+    )
+    result = model.invoke(
         [
             SystemMessage(content=CURATION_SYSTEM),
             HumanMessage(content=analysis_body.strip()),
         ]
     )
+    return result["parsed"], result["raw"].usage_metadata or {}
 
 
-def _dedupe(new_text: str, similar: list[tuple[str, str, float]]) -> _DedupeDecision:
-    model = init_chat_model(CURATION_MODEL).with_structured_output(_DedupeDecision)
+def _dedupe(
+    new_text: str, similar: list[tuple[str, str, float]]
+) -> tuple[_DedupeDecision, dict]:
+    model = init_chat_model(CURATION_MODEL).with_structured_output(
+        _DedupeDecision, include_raw=True
+    )
     existing = "\n\n---\n\n".join(
         f"[id={sid}  similarity={score:.2f}]\n{text}" for sid, text, score in similar
     )
-    return model.invoke(
+    result = model.invoke(
         [
             SystemMessage(content=DEDUPE_SYSTEM),
             HumanMessage(
@@ -226,12 +233,21 @@ def _dedupe(new_text: str, similar: list[tuple[str, str, float]]) -> _DedupeDeci
             ),
         ]
     )
+    return result["parsed"], result["raw"].usage_metadata or {}
 
 
 # ── ingestion ─────────────────────────────────────────────────────────────────
 
 
-def ingest_file(path: Path, client: QdrantClient, store: QdrantVectorStore) -> bool:
+def _fmt_tokens(usage: dict) -> str:
+    inp = usage.get("input_tokens", 0)
+    out = usage.get("output_tokens", 0)
+    return f"tokens in={inp} out={out}"
+
+
+def ingest_file(
+    path: Path, client: QdrantClient, store: QdrantVectorStore, verbose: bool = False
+) -> bool:
     """Curate and store a single .md file. Returns True if an entry was stored."""
     text = path.read_text()
     meta, body = _parse_frontmatter(text)
@@ -242,32 +258,37 @@ def ingest_file(path: Path, client: QdrantClient, store: QdrantVectorStore) -> b
 
     logging.info("%s — curating …", path.name)
     try:
-        result = _curate(body)
+        result, usage = _curate(body)
     except Exception as e:
         logging.warning("%s — curation failed: %s", path.name, e)
         return False
 
+    if verbose:
+        print(f"{path.name}  {_fmt_tokens(usage)}")
+
     if not result.store or not result.text:
         logging.info("%s → SKIP", path.name)
+        if verbose:
+            print(f"  → skip")
         return False
 
     # Dedup: check for similar existing entries before storing
     if client.collection_exists(COLLECTION):
         emb = _FastEmbeddings().embed_query(result.text)
-        hits = client.search(
+        hits = client.query_points(
             COLLECTION,
-            query_vector=emb,
+            query=emb,
             limit=DEDUPE_K,
             score_threshold=DEDUPE_THRESHOLD,
             with_payload=True,
-        )
+        ).points
         if hits:
             similar = [
                 (str(h.id), (h.payload or {}).get("page_content", ""), h.score)
                 for h in hits
             ]
             try:
-                decision = _dedupe(result.text, similar)
+                decision, dedup_usage = _dedupe(result.text, similar)
             except Exception as e:
                 logging.warning("%s — dedup failed: %s — storing anyway", path.name, e)
                 decision = None
@@ -276,6 +297,10 @@ def ingest_file(path: Path, client: QdrantClient, store: QdrantVectorStore) -> b
                 logging.info(
                     "%s → dedup: %s — %s", path.name, decision.action, decision.reason
                 )
+                if verbose:
+                    print(
+                        f"  dedup → {decision.action}: {decision.reason}  {_fmt_tokens(dedup_usage)}"
+                    )
                 if decision.action == "skip":
                     return False
                 if decision.action == "replace" and decision.replace_ids:
@@ -292,6 +317,9 @@ def ingest_file(path: Path, client: QdrantClient, store: QdrantVectorStore) -> b
     logging.info(
         "%s → STORE [%s / %s]", path.name, ", ".join(result.subsystems), result.type
     )
+    if verbose:
+        print(f"  → store [{', '.join(result.subsystems)} / {result.type}]")
+        print(f"  {result.text}")
 
     from langchain_core.documents import Document
 
@@ -345,10 +373,13 @@ class _State:
 
 
 def run_files(
-    paths: list[Path], client: QdrantClient, store: QdrantVectorStore
+    paths: list[Path],
+    client: QdrantClient,
+    store: QdrantVectorStore,
+    verbose: bool = False,
 ) -> None:
     for path in paths:
-        ingest_file(path, client, store)
+        ingest_file(path, client, store, verbose=verbose)
 
 
 def run_watch(
@@ -357,6 +388,7 @@ def run_watch(
     client: QdrantClient,
     store: QdrantVectorStore,
     poll: int,
+    verbose: bool = False,
 ) -> None:
     state = _State(db_path / "memorize_state.json")
     stop = threading.Event()
@@ -377,7 +409,7 @@ def run_watch(
             if md.name in processed:
                 continue
             try:
-                ingest_file(md, client, store)
+                ingest_file(md, client, store, verbose=verbose)
                 state.mark(md.name)
             except Exception as e:
                 logging.warning("%s — error: %s (will retry)", md.name, e)
@@ -544,6 +576,12 @@ def main() -> None:
     parser.add_argument(
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print curator decisions and token counts to stdout",
+    )
 
     # Maintenance flags (mutually exclusive with watch/process)
     parser.add_argument("--inspect", action="store_true", help="Show DB stats and exit")
@@ -602,13 +640,15 @@ def main() -> None:
 
     # Process / watch modes
     if args.files:
-        run_files([p.resolve() for p in args.files], client, store)
+        run_files(
+            [p.resolve() for p in args.files], client, store, verbose=args.verbose
+        )
     elif args.output_dir:
         output_dir = args.output_dir.resolve()
         if not output_dir.is_dir():
             logging.error("%s is not a directory", output_dir)
             sys.exit(1)
-        run_watch(output_dir, db_path, client, store, args.poll)
+        run_watch(output_dir, db_path, client, store, args.poll, verbose=args.verbose)
     else:
         parser.error("Provide --output-dir (watch mode) or file paths to process")
 
