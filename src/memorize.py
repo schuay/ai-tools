@@ -49,6 +49,8 @@ from qdrant_client.models import (
 # ── constants ─────────────────────────────────────────────────────────────────
 
 CURATION_MODEL = "google_genai:gemini-3-flash-preview"
+DEDUPE_THRESHOLD = 0.82  # cosine similarity above which we check for overlap
+DEDUPE_K = 3  # how many similar entries to surface for the dedup decision
 EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"  # local fastembed, 768 dims
 COLLECTION = "v8_memory"
 VECTOR_SIZE = 768
@@ -75,6 +77,19 @@ SUBSYSTEMS = [
     "debug",
 ]
 TYPES = ["performance", "correctness", "design", "gotcha", "api-change", "refactor"]
+
+DEDUPE_SYSTEM = """\
+You are maintaining a V8 engineering knowledge base. A new insight is ready to be stored,
+but similar entries already exist. Decide how to proceed:
+
+- add: the new entry covers genuinely new ground not captured by the existing entries
+- skip: the existing entries already cover this insight well enough
+- replace: the new entry supersedes one or more existing entries — provide their IDs
+
+Prefer a compact, high-quality knowledge base over accumulating redundant facts.
+When the existing entries are substantively equivalent, choose skip.
+When the new entry is clearly more complete or more accurate, choose replace.
+"""
 
 CURATION_SYSTEM = f"""\
 You are a V8 engine expert building a long-term engineering knowledge base.
@@ -117,6 +132,15 @@ class _Curation(BaseModel):
         default_factory=list, description="V8 subsystems this insight applies to"
     )
     type: str | None = Field(None, description="One of: " + ", ".join(TYPES))
+
+
+class _DedupeDecision(BaseModel):
+    action: str = Field(description="One of: add, skip, replace")
+    replace_ids: list[str] = Field(
+        default_factory=list,
+        description="Qdrant point IDs of existing entries to remove (replace action only)",
+    )
+    reason: str = Field(description="One sentence explanation")
 
 
 # ── embeddings (local fastembed, no API key needed) ───────────────────────────
@@ -189,10 +213,25 @@ def _curate(analysis_body: str) -> _Curation:
     )
 
 
+def _dedupe(new_text: str, similar: list[tuple[str, str, float]]) -> _DedupeDecision:
+    model = init_chat_model(CURATION_MODEL).with_structured_output(_DedupeDecision)
+    existing = "\n\n---\n\n".join(
+        f"[id={sid}  similarity={score:.2f}]\n{text}" for sid, text, score in similar
+    )
+    return model.invoke(
+        [
+            SystemMessage(content=DEDUPE_SYSTEM),
+            HumanMessage(
+                content=f"New entry:\n{new_text}\n\nExisting similar entries:\n{existing}"
+            ),
+        ]
+    )
+
+
 # ── ingestion ─────────────────────────────────────────────────────────────────
 
 
-def ingest_file(path: Path, store: QdrantVectorStore) -> bool:
+def ingest_file(path: Path, client: QdrantClient, store: QdrantVectorStore) -> bool:
     """Curate and store a single .md file. Returns True if an entry was stored."""
     text = path.read_text()
     meta, body = _parse_frontmatter(text)
@@ -211,6 +250,44 @@ def ingest_file(path: Path, store: QdrantVectorStore) -> bool:
     if not result.store or not result.text:
         logging.info("%s → SKIP", path.name)
         return False
+
+    # Dedup: check for similar existing entries before storing
+    if client.collection_exists(COLLECTION):
+        emb = _FastEmbeddings().embed_query(result.text)
+        hits = client.search(
+            COLLECTION,
+            query_vector=emb,
+            limit=DEDUPE_K,
+            score_threshold=DEDUPE_THRESHOLD,
+            with_payload=True,
+        )
+        if hits:
+            similar = [
+                (str(h.id), (h.payload or {}).get("page_content", ""), h.score)
+                for h in hits
+            ]
+            try:
+                decision = _dedupe(result.text, similar)
+            except Exception as e:
+                logging.warning("%s — dedup failed: %s — storing anyway", path.name, e)
+                decision = None
+
+            if decision is not None:
+                logging.info(
+                    "%s → dedup: %s — %s", path.name, decision.action, decision.reason
+                )
+                if decision.action == "skip":
+                    return False
+                if decision.action == "replace" and decision.replace_ids:
+                    client.delete(
+                        COLLECTION,
+                        points_selector=PointIdsList(points=decision.replace_ids),
+                    )
+                    logging.info(
+                        "%s → removed %d superseded entries",
+                        path.name,
+                        len(decision.replace_ids),
+                    )
 
     logging.info(
         "%s → STORE [%s / %s]", path.name, ", ".join(result.subsystems), result.type
@@ -267,14 +344,17 @@ class _State:
 # ── modes ─────────────────────────────────────────────────────────────────────
 
 
-def run_files(paths: list[Path], store: QdrantVectorStore) -> None:
+def run_files(
+    paths: list[Path], client: QdrantClient, store: QdrantVectorStore
+) -> None:
     for path in paths:
-        ingest_file(path, store)
+        ingest_file(path, client, store)
 
 
 def run_watch(
     output_dir: Path,
     db_path: Path,
+    client: QdrantClient,
     store: QdrantVectorStore,
     poll: int,
 ) -> None:
@@ -297,7 +377,7 @@ def run_watch(
             if md.name in processed:
                 continue
             try:
-                ingest_file(md, store)
+                ingest_file(md, client, store)
                 state.mark(md.name)
             except Exception as e:
                 logging.warning("%s — error: %s (will retry)", md.name, e)
@@ -522,13 +602,13 @@ def main() -> None:
 
     # Process / watch modes
     if args.files:
-        run_files([p.resolve() for p in args.files], store)
+        run_files([p.resolve() for p in args.files], client, store)
     elif args.output_dir:
         output_dir = args.output_dir.resolve()
         if not output_dir.is_dir():
             logging.error("%s is not a directory", output_dir)
             sys.exit(1)
-        run_watch(output_dir, db_path, store, args.poll)
+        run_watch(output_dir, db_path, client, store, args.poll)
     else:
         parser.error("Provide --output-dir (watch mode) or file paths to process")
 
