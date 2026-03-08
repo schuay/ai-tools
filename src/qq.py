@@ -6,9 +6,11 @@ answers using a fast model with optional tool access.
 Usage:
     qq [-e] <query words...>
     <cmd> | qq [-e] <query words...>
+    qq [-e] <query words...> -        (then type input, Ctrl-D to finish)
 
 Flags:
     -e    Echo stdin to stdout before the answer (useful in pipelines).
+    -     Read from stdin explicitly (even when running interactively).
 """
 
 import os
@@ -170,14 +172,16 @@ def main() -> None:
     parser.add_argument("query", nargs="+")
     args = parser.parse_args()
 
-    stdin_data = "" if sys.stdin.isatty() else sys.stdin.read()
+    force_stdin = "-" in sys.argv
+    stdin_data = sys.stdin.read() if (force_stdin or not sys.stdin.isatty()) else ""
 
     if args.echo and stdin_data:
         sys.stdout.write(stdin_data)
         if not stdin_data.endswith("\n"):
             sys.stdout.write("\n")
 
-    print(run(" ".join(args.query), stdin_data))
+    query_words = [w for w in args.query if w != "-"]
+    print(run(" ".join(query_words), stdin_data))
 
 
 if __name__ == "__main__":
