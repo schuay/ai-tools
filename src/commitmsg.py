@@ -1,13 +1,16 @@
 """commitmsg.py — generate a commit message for the current changes.
 
-Reads `git diff HEAD`, understands the changes (using git tools for
-additional context if needed), and prints a commit message.
+Reads the relevant diff and prints a commit message suitable for use with
+`git commit -m` or `git commit -am`:
+
+    git commit -m  "$(commitmsg)"       # staged changes only (default)
+    git commit -am "$(commitmsg -a)"    # all tracked modifications
 
 Usage:
-    python commitmsg.py
-    uv run commitmsg.py
+    commitmsg [-a | --all]
 """
 
+import argparse
 import subprocess
 import sys
 
@@ -64,8 +67,10 @@ def _extract_text(content: object) -> str:
 # ── core ──────────────────────────────────────────────────────────────────────
 
 
-def run() -> str:
-    diff = _run_git("diff", "HEAD")
+def run(all_changes: bool = False) -> str:
+    # staged only: matches `git commit -m`
+    # all tracked: matches `git commit -am` (which stages before committing)
+    diff = _run_git("diff", "HEAD" if all_changes else "--staged")
     if not diff.strip():
         return "No changes to commit."
 
@@ -106,7 +111,18 @@ def run() -> str:
 
 
 def main() -> None:
-    print(run())
+    parser = argparse.ArgumentParser(
+        description="Generate a git commit message for the current changes."
+    )
+    parser.add_argument(
+        "-a",
+        "--all",
+        dest="all_changes",
+        action="store_true",
+        help="Include all tracked modifications (for use with git commit -am)",
+    )
+    args = parser.parse_args()
+    print(run(all_changes=args.all_changes))
 
 
 if __name__ == "__main__":
