@@ -141,11 +141,11 @@ def read_file(
     except Exception as e:
         return f"Error reading {path}: {e}"
 
-    if line is not None:
-        from tools.git import trim_to_context
+    from tools.git import _CHARS_PER_LINE, _cap_chars, trim_to_context
 
+    if line is not None:
         return trim_to_context(content, line, context)
-    return content
+    return _cap_chars(content, context * _CHARS_PER_LINE)
 
 
 def grep_files(
@@ -177,17 +177,17 @@ def grep_files(
     out = r.stdout if r.returncode in (0, 1) else f"Error: {r.stderr.strip()}"
     if not out.strip():
         return "No matches found."
-    if line is not None:
-        from tools.git import trim_to_context
+    from tools.git import _CHARS_PER_LINE, _cap_chars, trim_to_context
 
+    if line is not None:
         return trim_to_context(out, line, context)
     lines = out.splitlines(keepends=True)
     if len(lines) > context:
-        return (
+        out = (
             "".join(lines[:context])
             + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
         )
-    return out
+    return _cap_chars(out, context * _CHARS_PER_LINE)
 
 
 def list_dir(path: str = ".") -> str:

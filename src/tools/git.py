@@ -16,16 +16,29 @@ def _git(args: list[str]) -> str:
     return r.stdout if r.returncode == 0 else f"Error: {r.stderr.strip()}"
 
 
+_CHARS_PER_LINE = 500  # char cap triggers when average output line exceeds this
+
+
+def _cap_chars(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return (
+        text[:limit]
+        + f"\n[truncated — output exceeded {limit:,} chars; use line= to navigate]"
+    )
+
+
 def trim_to_context(full_text: str, line: int | None, context: int = 20) -> str:
     if line is None:
         return full_text
     lines = full_text.splitlines(keepends=True)
     start = max(0, line - 1 - context)
     end = min(len(lines), line - 1 + context + 1)
-    return "".join(
+    result = "".join(
         f"{i + 1:>6}  {'>>>' if i + 1 == line else '   '}  {lines[i]}"
         for i in range(start, end)
     )
+    return _cap_chars(result, context * _CHARS_PER_LINE)
 
 
 # ── public helpers ────────────────────────────────────────────────────────────
@@ -72,11 +85,11 @@ def git_grep(
         return trim_to_context(out, line, context)
     lines = out.splitlines(keepends=True)
     if len(lines) > context:
-        return (
+        out = (
             "".join(lines[:context])
             + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
         )
-    return out
+    return _cap_chars(out, context * _CHARS_PER_LINE)
 
 
 def git_show(
@@ -101,11 +114,11 @@ def git_show(
         return trim_to_context(out, line, context)
     lines = out.splitlines(keepends=True)
     if len(lines) > context:
-        return (
+        out = (
             "".join(lines[:context])
             + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
         )
-    return out
+    return _cap_chars(out, context * _CHARS_PER_LINE)
 
 
 def git_blame(
@@ -132,11 +145,11 @@ def git_blame(
         return trim_to_context(out, line, context)
     lines = out.splitlines(keepends=True)
     if len(lines) > 150:
-        return (
+        out = (
             "".join(lines[:150])
             + f"\n[truncated — {len(lines) - 150} more lines; use line= to navigate]"
         )
-    return out
+    return _cap_chars(out, 150 * _CHARS_PER_LINE)
 
 
 def git_log(
