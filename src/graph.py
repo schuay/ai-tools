@@ -28,6 +28,7 @@ from tools import (
     git_show,
     list_dir,
     read_around,
+    read_file,
     web_fetch,
     web_search,
     write_file,
@@ -165,6 +166,7 @@ def make_agent(
     identity = _identity_section(name, agents) if name and agents else ""
     tools = [
         grep_files,
+        read_file,
         git_grep,
         git_show,
         git_blame,

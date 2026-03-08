@@ -1,4 +1,4 @@
-from tools.fs import edit_file, grep_files, list_dir, write_file
+from tools.fs import edit_file, grep_files, list_dir, read_file, write_file
 from tools.git import (
     REPO_ROOT,
     git_blame,
@@ -31,6 +31,7 @@ __all__ = [
     "git_show",
     "in_git_repo",
     "list_dir",
+    "read_file",
     "read_around",
     "trim_to_context",
     "web_fetch",

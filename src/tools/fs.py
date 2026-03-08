@@ -116,6 +116,38 @@ def preview_write(path: str, content: str) -> str:
 # ── agent tools ───────────────────────────────────────────────────────────────
 
 
+def read_file(
+    path: str,
+    line: int | None = None,
+    context: int = 80,
+) -> str:
+    """Read a file from the filesystem.
+
+    path: file path (absolute or relative to the working directory)
+    line: if given, centre the output on this 1-based line number and show
+          `context` lines before and after it (with line numbers and a >>> marker)
+    context: lines to show around `line` (default 80); when line is not given,
+             the full file is returned
+    """
+    file_path = Path(path).expanduser()
+    if not file_path.is_absolute():
+        file_path = Path(os.getcwd()) / file_path
+    if not file_path.exists():
+        return f"Error: {path} does not exist"
+    if not file_path.is_file():
+        return f"Error: {path} is not a file"
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return f"Error reading {path}: {e}"
+
+    if line is not None:
+        from tools.git import trim_to_context
+
+        return trim_to_context(content, line, context)
+    return content
+
+
 def grep_files(
     pattern: str,
     path: str = ".",
