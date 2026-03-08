@@ -30,6 +30,7 @@ from tools import (
     git_blame,
     git_commit_meta,
     git_commits_since,
+    git_commits_since_date,
     git_fetch,
     git_grep,
     git_log,
@@ -527,6 +528,43 @@ def run_range(
     )
 
 
+def run_since(
+    repo: Path,
+    output_dir: Path,
+    state: State,
+    filter_model,
+    analysis_model,
+    since: str,
+    ref: str = "HEAD",
+    workers: int = 1,
+) -> None:
+    stop_event = threading.Event()
+
+    def _handle_signal(signum, frame):
+        logging.info(
+            "Signal %s received — stopping (Ctrl-C again to force quit) …", signum
+        )
+        stop_event.set()
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    commits = git_commits_since_date(since, ref)
+    logging.info("--since %r on %s → %d commit(s)", since, ref, len(commits))
+    process_commits(
+        commits,
+        repo,
+        output_dir,
+        state,
+        filter_model,
+        analysis_model,
+        workers,
+        stop_event,
+    )
+
+
 def run_daemon(
     repo: Path,
     output_dir: Path,
@@ -642,6 +680,12 @@ def main() -> None:
         help="Number of commits to analyse in parallel (default: 1)",
     )
     parser.add_argument(
+        "--since",
+        dest="since_spec",
+        metavar="DATE",
+        help="One-shot mode: process commits since DATE (passed to git --since, e.g. '2 weeks ago', '2024-01-01')",
+    )
+    parser.add_argument(
         "--range",
         dest="range_spec",
         metavar="FROM..TO",
@@ -675,7 +719,19 @@ def main() -> None:
     filter_model = init_chat_model(FILTER_MODEL)
     analysis_model = init_chat_model(args.model, **MODEL_KWARGS)
 
-    if args.range_spec:
+    if args.since_spec:
+        remote_ref = f"{args.remote}/{args.branch}"
+        run_since(
+            repo,
+            output_dir,
+            state,
+            filter_model,
+            analysis_model,
+            since=args.since_spec,
+            ref=remote_ref,
+            workers=args.workers,
+        )
+    elif args.range_spec:
         # One-shot range mode
         parts = args.range_spec.split("..")
         if len(parts) != 2:

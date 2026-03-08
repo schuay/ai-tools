@@ -189,6 +189,18 @@ def git_commits_since(since: str, until: str) -> list[str]:
     return out.splitlines()
 
 
+def git_commits_since_date(since: str, ref: str = "HEAD") -> list[str]:
+    """Return commit hashes reachable from ref with date >= since, oldest first.
+
+    since is passed directly to git --since and accepts any format git understands:
+    "2 weeks ago", "2024-01-01", "yesterday", "2024-03-01T00:00:00", etc.
+    """
+    out = _git(["git", "log", "--reverse", "--format=%H", f"--since={since}", ref])
+    if out.startswith("Error:") or not out:
+        return []
+    return out.splitlines()
+
+
 def git_commit_meta(commit_hash: str) -> dict[str, str]:
     """Return a dict with keys: hash, author, date, subject, body."""
     fmt = "%H%n%ae%n%ci%n%s%n%n%b"
