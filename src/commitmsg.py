@@ -3,11 +3,12 @@
 Reads the relevant diff and prints a commit message suitable for use with
 `git commit -m` or `git commit -am`:
 
-    git commit -m  "$(commitmsg)"       # staged changes only (default)
-    git commit -am "$(commitmsg -a)"    # all tracked modifications
+    git commit -m  "$(commitmsg)"          # staged changes only (default)
+    git commit -am "$(commitmsg -a)"       # all tracked modifications
+    git commit -m  "$(commitmsg --full)"   # full message with optional body
 
 Usage:
-    commitmsg [-a | --all]
+    commitmsg [-a | --all] [--full]
 """
 
 import argparse
@@ -24,7 +25,21 @@ from tools import git_blame, git_log, git_show, read_around
 MODEL_ID = "google_genai:gemini-3-flash-preview"
 MODEL_KWARGS = {"include_thoughts": True, "thinking_level": "medium"}
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT_ONELINE = """\
+You are an expert software engineer writing git commit messages.
+
+Given a git diff, write a single-line commit message that accurately and
+concisely describes the changes as one atomic work step.
+
+Rules:
+- Imperative mood, ≤72 characters, no trailing period
+- No component/scope tags (no "feat:", "fix:", "component:" prefixes)
+- One line only — no body, no blank lines
+
+Output ONLY the subject line — no commentary, no markdown fences, no preamble.\
+"""
+
+SYSTEM_PROMPT_FULL = """\
 You are an expert software engineer writing git commit messages.
 
 Given a git diff, write a commit message that accurately and concisely describes
@@ -67,7 +82,7 @@ def _extract_text(content: object) -> str:
 # ── core ──────────────────────────────────────────────────────────────────────
 
 
-def run(all_changes: bool = False) -> str:
+def run(all_changes: bool = False, full: bool = False) -> str:
     # staged only: matches `git commit -m`
     # all tracked: matches `git commit -am` (which stages before committing)
     diff = _run_git("diff", "HEAD" if all_changes else "--staged")
@@ -83,12 +98,15 @@ def run(all_changes: bool = False) -> str:
     else:
         diff_content = diff
 
+    system_prompt = SYSTEM_PROMPT_FULL if full else SYSTEM_PROMPT_ONELINE
     tools = [git_show, read_around, git_blame, git_log]
-    model = init_chat_model(MODEL_ID, **MODEL_KWARGS).bind_tools(tools)
+    kwargs = MODEL_KWARGS if full else {**MODEL_KWARGS, "thinking_level": "minimal"}
+    base_model = init_chat_model(MODEL_ID, **kwargs)
+    model = base_model.bind_tools(tools) if full else base_model
     tool_map = {fn.__name__: fn for fn in tools}
 
     messages: list = [
-        SystemMessage(content=SYSTEM_PROMPT),
+        SystemMessage(content=system_prompt),
         HumanMessage(content=f"<diff>\n{diff_content}\n</diff>"),
     ]
 
@@ -96,7 +114,7 @@ def run(all_changes: bool = False) -> str:
         response: AIMessage = model.invoke(messages)
         messages.append(response)
 
-        if not response.tool_calls:
+        if not getattr(response, "tool_calls", None):
             return _extract_text(response.content).strip()
 
         for tc in response.tool_calls:
@@ -121,8 +139,13 @@ def main() -> None:
         action="store_true",
         help="Include all tracked modifications (for use with git commit -am)",
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Emit a full message with optional body (default: one-line only)",
+    )
     args = parser.parse_args()
-    print(run(all_changes=args.all_changes))
+    print(run(all_changes=args.all_changes, full=args.full))
 
 
 if __name__ == "__main__":
