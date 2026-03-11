@@ -18,21 +18,7 @@ from deepagents.middleware.summarization import (
     compute_summarization_defaults,
 )
 
-from tools import (
-    REPO_ROOT,
-    edit_file,
-    grep_files,
-    git_blame,
-    git_grep,
-    git_log,
-    git_show,
-    list_dir,
-    read_around,
-    read_file,
-    web_fetch,
-    web_search,
-    write_file,
-)
+from tools import REPO_ROOT, standard_tools
 
 
 # ── tools ────────────────────────────────────────────────────────────────────
@@ -161,24 +147,14 @@ def make_agent(
     agents: dict | None = None,
     interrupt_on: dict | None = None,
     extra_tools: list | None = None,
+    system_prompt: str | None = None,
 ):
     model = model or _default_model
     identity = _identity_section(name, agents) if name and agents else ""
-    tools = [
-        grep_files,
-        read_file,
-        git_grep,
-        git_show,
-        git_blame,
-        git_log,
-        read_around,
-        list_dir,
-        edit_file,
-        write_file,
-        ask_user,
-    ]
-    if os.environ.get("TAVILY_API_KEY"):
-        tools = [web_search, web_fetch] + tools
+    tools = standard_tools(fs=True)
+    # ask_user uses LangGraph interrupt() — only meaningful in interactive sessions
+    if interrupt_on:
+        tools = tools + [ask_user]
     if extra_tools:
         tools = tools + extra_tools
 
@@ -232,7 +208,9 @@ def make_agent(
     if interrupt_on:
         middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
 
-    system_prompt = identity + v8_instructions + "\n\n" + BASE_AGENT_PROMPT
+    system_prompt = system_prompt or (
+        identity + v8_instructions + "\n\n" + BASE_AGENT_PROMPT
+    )
 
     return create_agent(
         model,

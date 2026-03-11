@@ -30,6 +30,7 @@ dependencies = [
 [project.scripts]
 agent = "cli:main"
 qq = "qq:main"
+analyze = "analyze:main"
 commitmsg = "commitmsg:main"
 repowatcher = "repowatcher:main"
 memorize = "memorize:main"
@@ -37,5 +38,5 @@ memory-mcp = "memory_mcp:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["cli", "commitmsg", "graph", "memorize", "memory_mcp", "qq", "repowatcher", "session"]
+py-modules = ["analyze", "cli", "commitmsg", "graph", "memorize", "memory_mcp", "qq", "repowatcher", "runner", "session"]
 packages = ["tools"]

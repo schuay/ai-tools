@@ -13,7 +13,6 @@ Flags:
     -     Read from stdin explicitly (even when running interactively).
 """
 
-import os
 import re
 import sys
 from argparse import ArgumentParser
@@ -24,15 +23,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from platformdirs import user_config_path
 
-from tools import (
-    git_blame,
-    git_log,
-    git_show,
-    read_around,
-    web_fetch,
-    web_search,
-)
-from tools.git import in_git_repo
+from tools import standard_tools
 
 # ── model ─────────────────────────────────────────────────────────────────────
 
@@ -133,11 +124,7 @@ def _make_stdin_tools(data: str):
 
 
 def run(query: str, stdin_data: str) -> str:
-    tools: list = [web_fetch]
-    if os.environ.get("TAVILY_API_KEY"):
-        tools = [web_search] + tools
-    if in_git_repo():
-        tools = [git_show, git_blame, git_log, read_around] + tools
+    tools = standard_tools()
 
     human_content = query
     if stdin_data:
