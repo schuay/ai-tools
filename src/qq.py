@@ -17,9 +17,12 @@ import os
 import re
 import sys
 from argparse import ArgumentParser
+from datetime import date
+from pathlib import Path
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from platformdirs import user_config_path
 
 from tools import (
     git_blame,
@@ -36,7 +39,7 @@ from tools.git import in_git_repo
 MODEL_ID = "google_genai:gemini-3.1-flash-lite-preview"
 MODEL_KWARGS = {"thinking_level": "minimal"}
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT_BASE = """\
 You are a highly experienced senior V8 JavaScript engine engineer and general-purpose
 technical researcher, embedded in a developer's terminal as a quick-answer tool.
 
@@ -57,6 +60,25 @@ Use tools only when you cannot answer confidently from your own knowledge:
 - Use web_search / web_fetch for current information, external docs, or bug reports.
 - Do not call tools for facts you already know.\
 """
+
+_CONFIG_PATH = user_config_path("ai-tools") / "config.toml"
+
+
+def _read_config() -> dict:
+    try:
+        import tomllib
+
+        return tomllib.loads(_CONFIG_PATH.read_text())
+    except FileNotFoundError:
+        return {}
+
+
+def _build_system_prompt() -> str:
+    config = _read_config()
+    context_lines: list[str] = [f"Today's date: {date.today().isoformat()}"]
+    if location := config.get("location"):
+        context_lines.append(f"Location: {location}")
+    return SYSTEM_PROMPT_BASE + "\n\n## Context\n" + "\n".join(context_lines)
 
 
 # ── core ──────────────────────────────────────────────────────────────────────
@@ -139,7 +161,7 @@ def run(query: str, stdin_data: str) -> str:
     tool_map = {fn.__name__: fn for fn in tools}
 
     messages: list = [
-        SystemMessage(content=SYSTEM_PROMPT),
+        SystemMessage(content=_build_system_prompt()),
         HumanMessage(content=human_content),
     ]
 
