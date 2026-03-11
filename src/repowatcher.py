@@ -575,6 +575,7 @@ def run_daemon(
     branch: str,
     poll_seconds: int,
     workers: int = 1,
+    start_from: str | None = None,
 ) -> None:
     stop_event = threading.Event()
 
@@ -591,14 +592,39 @@ def run_daemon(
 
     remote_ref = f"{remote}/{branch}"
 
-    # First run: initialise daemon_tip to current tip without backfilling
+    # First run: optionally backfill from a known start point, then set daemon_tip
     if state.daemon_tip is None:
         git_fetch(remote)
         tip = git_resolve(remote_ref)
         if tip.startswith("Error:"):
             logging.error("Cannot resolve %s: %s", remote_ref, tip)
             sys.exit(1)
-        logging.info("First run — starting from %s (no backfill)", tip[:8])
+        if start_from:
+            from_ref = git_resolve(start_from)
+            if from_ref.startswith("Error:"):
+                logging.error(
+                    "Cannot resolve --start-from %r: %s", start_from, from_ref
+                )
+                sys.exit(1)
+            commits = git_commits_since(from_ref, tip)
+            logging.info(
+                "First run — backfilling %d commit(s) from %s to %s …",
+                len(commits),
+                start_from,
+                tip[:8],
+            )
+            process_commits(
+                commits,
+                repo,
+                output_dir,
+                state,
+                filter_model,
+                analysis_model,
+                workers,
+                stop_event,
+            )
+        else:
+            logging.info("First run — starting from %s (no backfill)", tip[:8])
         state.set_daemon_tip(tip)
 
     logging.info("Polling %s every %ds …", remote_ref, poll_seconds)
@@ -692,6 +718,11 @@ def main() -> None:
         help="One-shot mode: process commits in FROM..TO range",
     )
     parser.add_argument(
+        "--start-from",
+        metavar="REF",
+        help="Daemon mode: on first run, backfill commits from REF (hash, tag, or branch) to current tip",
+    )
+    parser.add_argument(
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     args = parser.parse_args()
@@ -762,6 +793,7 @@ def main() -> None:
             branch=args.branch,
             poll_seconds=args.poll,
             workers=args.workers,
+            start_from=args.start_from,
         )
 
 
