@@ -5,7 +5,7 @@ Exposes two tools to Claude Code and other MCP clients:
   - list_memory_info: DB stats (entry count, available subsystems/types)
 
 Configuration (environment variables):
-  V8_MEMORY_DB_PATH   path to the Qdrant DB directory (required)
+  V8_MEMORY_DB_PATH   path to the Chroma DB directory (required)
 
 Usage:
     memory-mcp                          # stdio (default, for Claude Code)
@@ -17,7 +17,7 @@ Claude Code ~/.claude/mcp.json:
         "v8-memory": {
           "command": "uv",
           "args": ["--directory", "/path/to/ai-tools", "run", "memory-mcp"],
-          "env": { "V8_MEMORY_DB_PATH": "/path/to/db" }
+          "env": { "V8_MEMORY_DB_PATH": "/path/to/chroma/db" }
         }
       }
     }
@@ -25,14 +25,12 @@ Claude Code ~/.claude/mcp.json:
 
 import os
 import sys
-from pathlib import Path
 
+import chromadb
 from fastmcp import FastMCP
-from langchain_qdrant import QdrantVectorStore
-from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchValue
+from langchain_chroma import Chroma
 
-from memorize import COLLECTION, SUBSYSTEMS, TYPES, _FastEmbeddings
+from memorize import COLLECTION, SUBSYSTEMS, TYPES, _FastEmbeddings, _build_filter
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 
@@ -41,9 +39,9 @@ if not _db_path:
     print("V8_MEMORY_DB_PATH is not set", file=sys.stderr)
     sys.exit(1)
 
-_client = QdrantClient(path=_db_path)
-_store = QdrantVectorStore(
-    client=_client, collection_name=COLLECTION, embedding=_FastEmbeddings()
+_client = chromadb.PersistentClient(path=_db_path)
+_store = Chroma(
+    client=_client, collection_name=COLLECTION, embedding_function=_FastEmbeddings()
 )
 
 mcp = FastMCP(
@@ -92,18 +90,11 @@ def search_v8_memory(
     limit: number of results to return (default 5, max 20)
     """
     limit = min(limit, 20)
-    must = []
-    if subsystem:
-        must.append(
-            FieldCondition(key="metadata.subsystems", match=MatchValue(value=subsystem))
-        )
-    if type:
-        must.append(FieldCondition(key="metadata.type", match=MatchValue(value=type)))
-    qdrant_filter = Filter(must=must) if must else None
+    chroma_filter = _build_filter(subsystem, type)
 
     try:
         results = _store.similarity_search_with_score(
-            query, k=limit, filter=qdrant_filter
+            query, k=limit, filter=chroma_filter
         )
     except Exception as e:
         return f"Search error: {e}"
@@ -114,7 +105,8 @@ def search_v8_memory(
     parts = []
     for doc, score in results:
         m = doc.metadata
-        tags = ", ".join(m.get("subsystems", [])) or "—"
+        subs = (m.get("subsystems") or "").split(",")
+        tags = ", ".join(s for s in subs if s) or "—"
         parts.append(
             f"[relevance {score:.2f} | {m.get('date', '')} | {tags} | {m.get('type', '')}]\n"
             f"{doc.page_content}\n"
@@ -126,38 +118,30 @@ def search_v8_memory(
 @mcp.tool()
 def list_memory_info() -> str:
     """Return statistics about the V8 memory DB: entry count, subsystems, types, date range."""
-    if not _client.collection_exists(COLLECTION):
+    try:
+        collection = _client.get_collection(COLLECTION)
+    except Exception:
         return "Memory DB is empty (collection does not exist yet)."
 
-    info = _client.get_collection(COLLECTION)
-    total = info.points_count
+    total = collection.count()
     if not total:
         return "Memory DB is empty."
 
+    results = collection.get(include=["metadatas"])
     subsystem_counts: dict[str, int] = {}
     type_counts: dict[str, int] = {}
     dates: list[str] = []
-    offset = None
 
-    while True:
-        points, offset = _client.scroll(
-            COLLECTION,
-            with_payload=True,
-            with_vectors=False,
-            limit=200,
-            offset=offset,
-        )
-        for p in points:
-            m = (p.payload or {}).get("metadata", {})
-            for s in m.get("subsystems", []):
+    for m in results["metadatas"]:
+        for s in (m.get("subsystems") or "").split(","):
+            s = s.strip()
+            if s:
                 subsystem_counts[s] = subsystem_counts.get(s, 0) + 1
-            t = m.get("type", "")
-            if t:
-                type_counts[t] = type_counts.get(t, 0) + 1
-            if m.get("date"):
-                dates.append(m["date"])
-        if offset is None:
-            break
+        t = m.get("type", "")
+        if t:
+            type_counts[t] = type_counts.get(t, 0) + 1
+        if m.get("date"):
+            dates.append(m["date"])
 
     lines = [f"Total entries: {total}"]
     if dates:
