@@ -2,6 +2,7 @@
 
 import subprocess
 from pathlib import Path
+from typing import Annotated
 
 MAX_OUTPUT = 50_000  # chars; truncate beyond this to avoid flooding context
 
@@ -46,7 +47,7 @@ def run_shell(command: str, timeout: int = 60) -> str:
 
 def run_d8(
     d8_dir: str,
-    args: list[str],
+    args: Annotated[list[str], "arguments to pass to d8"],
     timeout: int = 60,
     stdout_file: str | None = None,
     stderr_file: str | None = None,
