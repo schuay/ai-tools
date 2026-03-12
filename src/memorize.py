@@ -34,6 +34,7 @@ from pathlib import Path
 
 import chromadb
 from fastembed import TextEmbedding as _FE
+from platformdirs import user_data_dir
 from langchain.chat_models import init_chat_model
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
@@ -48,6 +49,7 @@ DEDUPE_THRESHOLD = 0.82  # cosine similarity above which we check for overlap
 DEDUPE_K = 3  # how many similar entries to surface for the dedup decision
 EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"  # local fastembed, 768 dims
 COLLECTION = "v8_memory"
+DEFAULT_DB = Path(user_data_dir("ai-tools")) / "v8-memory"
 VECTOR_SIZE = 768
 
 SUBSYSTEMS = [
@@ -580,7 +582,10 @@ def main() -> None:
         description="Curate V8 commit analyses into a vector memory DB."
     )
     parser.add_argument(
-        "--db", required=True, type=Path, help="Path to Chroma DB directory"
+        "--db",
+        type=Path,
+        default=DEFAULT_DB,
+        help=f"Path to Chroma DB directory (default: {DEFAULT_DB})",
     )
     parser.add_argument(
         "--output-dir", type=Path, help="repowatcher output dir to watch"

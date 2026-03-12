@@ -5,7 +5,7 @@ Exposes two tools to Claude Code and other MCP clients:
   - list_memory_info: DB stats (entry count, available subsystems/types)
 
 Configuration (environment variables):
-  V8_MEMORY_DB_PATH   path to the Chroma DB directory (required)
+  V8_MEMORY_DB_PATH   path to the Chroma DB directory (default: platformdirs user_data_dir/ai-tools/v8-memory)
 
 Usage:
     memory-mcp                          # stdio (default, for Claude Code)
@@ -24,20 +24,23 @@ Claude Code ~/.claude/mcp.json:
 """
 
 import os
-import sys
 
 import chromadb
 from fastmcp import FastMCP
 from langchain_chroma import Chroma
 
-from memorize import COLLECTION, SUBSYSTEMS, TYPES, _FastEmbeddings, _build_filter
+from memorize import (
+    COLLECTION,
+    DEFAULT_DB,
+    SUBSYSTEMS,
+    TYPES,
+    _FastEmbeddings,
+    _build_filter,
+)
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 
-_db_path = os.environ.get("V8_MEMORY_DB_PATH", "")
-if not _db_path:
-    print("V8_MEMORY_DB_PATH is not set", file=sys.stderr)
-    sys.exit(1)
+_db_path = os.environ.get("V8_MEMORY_DB_PATH") or str(DEFAULT_DB)
 
 _client = chromadb.PersistentClient(path=_db_path)
 _store = Chroma(
