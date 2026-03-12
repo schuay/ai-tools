@@ -1,5 +1,6 @@
 """Agent definition — used by both the CLI session and langgraph dev (Studio)."""
 
+import copy
 import os
 
 from langchain.agents import create_agent
@@ -19,6 +20,39 @@ from deepagents.middleware.summarization import (
 )
 
 from tools import REPO_ROOT, standard_tools
+
+
+# ── schema helpers ───────────────────────────────────────────────────────────
+
+
+def _add_items_to_arrays(schema: dict) -> None:
+    """Recursively add items:{} to array types missing it (required by Gemini)."""
+    if not isinstance(schema, dict):
+        return
+    if schema.get("type") == "array" and "items" not in schema:
+        schema["items"] = {}
+    for v in schema.values():
+        if isinstance(v, dict):
+            _add_items_to_arrays(v)
+        elif isinstance(v, list):
+            for item in v:
+                _add_items_to_arrays(item)
+
+
+def _fix_tool_schema(tool: StructuredTool) -> StructuredTool:
+    """Patch a tool's args_schema to add missing array items fields (Gemini)."""
+    schema_cls = getattr(tool, "args_schema", None)
+    if schema_cls is None:
+        return tool
+    orig_fn = schema_cls.model_json_schema.__func__
+
+    def patched(cls, **kwargs):
+        s = copy.deepcopy(orig_fn(cls, **kwargs))
+        _add_items_to_arrays(s)
+        return s
+
+    schema_cls.model_json_schema = classmethod(patched)
+    return tool
 
 
 # ── tools ────────────────────────────────────────────────────────────────────
@@ -159,9 +193,11 @@ def make_agent(
         tools = tools + extra_tools
 
     tools = [
-        StructuredTool.from_function(t, handle_tool_error=True)
-        if callable(t) and not isinstance(t, StructuredTool)
-        else t
+        _fix_tool_schema(
+            StructuredTool.from_function(t, handle_tool_error=True)
+            if callable(t) and not isinstance(t, StructuredTool)
+            else t
+        )
         for t in tools
     ]
 

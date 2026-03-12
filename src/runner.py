@@ -12,7 +12,6 @@ loop because it needs threading, interrupt events, and HITL tool approval.
 """
 
 import contextlib
-import copy
 import sys
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
@@ -20,39 +19,6 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from graph import make_agent
-
-
-# ── schema helpers ────────────────────────────────────────────────────────────
-
-
-def _add_items_to_arrays(schema: dict) -> None:
-    """Recursively add items:{} to array types missing it (required by Gemini)."""
-    if not isinstance(schema, dict):
-        return
-    if schema.get("type") == "array" and "items" not in schema:
-        schema["items"] = {}
-    for v in schema.values():
-        if isinstance(v, dict):
-            _add_items_to_arrays(v)
-        elif isinstance(v, list):
-            for item in v:
-                _add_items_to_arrays(item)
-
-
-def _fix_tool_schema(tool):
-    """Patch a StructuredTool's args_schema to add missing array items fields."""
-    schema_cls = getattr(tool, "args_schema", None)
-    if schema_cls is None:
-        return tool
-    orig_fn = schema_cls.model_json_schema.__func__
-
-    def patched(cls, **kwargs):
-        s = copy.deepcopy(orig_fn(cls, **kwargs))
-        _add_items_to_arrays(s)
-        return s
-
-    schema_cls.model_json_schema = classmethod(patched)
-    return tool
 
 
 # ── MCP helpers ───────────────────────────────────────────────────────────────
@@ -195,10 +161,7 @@ async def run_once(
                 }
                 mcp_tools: list = []
                 for name, sess in sessions.items():
-                    mcp_tools.extend(
-                        _fix_tool_schema(t)
-                        for t in await load_mcp_tools(sess, server_name=name)
-                    )
+                    mcp_tools.extend(await load_mcp_tools(sess, server_name=name))
                 return await _execute(mcp_tools)
         except ImportError:
             if verbose:
