@@ -46,7 +46,7 @@ def run_shell(command: str, timeout: int = 60) -> str:
 
 def run_d8(
     d8_dir: str,
-    args: list[str],
+    d8_args: list[str],
     timeout: int = 60,
     stdout_file: str | None = None,
     stderr_file: str | None = None,
@@ -54,12 +54,12 @@ def run_d8(
     """Run the d8 JavaScript shell with the given arguments.
 
     d8_dir: directory containing the d8 binary (e.g. "/path/to/v8/out/release")
-    args: list of arguments to pass to d8 (e.g. ["--prof", "script.js"])
+    d8_args: list of arguments to pass to d8 (e.g. ["--prof", "script.js"])
     timeout: maximum seconds to wait before killing the process (default 60)
     stdout_file: if set, redirect stdout to this file (path) instead of capturing it
     stderr_file: if set, redirect stderr to this file (path) instead of capturing it
     """
-    cmd = [str(Path(d8_dir) / "d8"), *args]
+    cmd = [str(Path(d8_dir) / "d8"), *d8_args]
     stdout = open(stdout_file, "w") if stdout_file else subprocess.PIPE
     stderr = open(stderr_file, "w") if stderr_file else subprocess.PIPE
     try:
