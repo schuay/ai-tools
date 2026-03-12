@@ -8,7 +8,7 @@ Usage:
             [--system-prompt FILE] [--quiet] <file>...
 
 The agent has access to:
-  - run_shell  (perf, flamegraph, addr2line, objdump, …)
+  - run_d8     (execute d8 with given args, optional stdout/stderr redirection)
   - read_file, grep_files, list_dir, edit_file, write_file
   - web_search / web_fetch (if TAVILY_API_KEY is set)
   - git tools (if the cwd is a git repo)
@@ -23,7 +23,7 @@ from pathlib import Path
 from langchain.chat_models import init_chat_model
 
 import runner
-from tools.shell import run_shell
+from tools.shell import run_d8
 
 # ── system prompt ─────────────────────────────────────────────────────────────
 
@@ -39,9 +39,11 @@ numbers rather than speculating. Prefer precise, evidence-backed statements.
 1. Inspect the trace file: determine its format (perf.data, cpuprofile, JSON,
    text report, …) and choose the right analysis tools accordingly.
 2. Identify hotspots: extract the top functions/call stacks by CPU time or
-   sample count. Use perf report, FlameGraph scripts, or equivalent.
+   sample count. Use read_file, grep_files, or run_d8 as appropriate.
 3. Drill down: for significant hotspots, look up symbol addresses, source
-   locations, and caller/callee chains as needed.
+   locations, and caller/callee chains as needed. Use run_d8 to re-run d8
+   with profiling flags (e.g. --prof, --log-maps) and redirect output to files
+   for further analysis.
 4. Correlate: cross-reference with source code (read_file, grep_files, git
    tools) and external documentation (web_search) to understand *why* something
    is hot and what can be done about it.
@@ -150,7 +152,7 @@ def main() -> None:
                 runner.run_once(
                     prompt,
                     model,
-                    extra_tools=[run_shell],
+                    extra_tools=[run_d8],
                     system_prompt=system_prompt,
                     verbose=not args.quiet,
                 )
