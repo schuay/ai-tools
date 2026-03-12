@@ -5,7 +5,7 @@ a Markdown report alongside the input (or into --output-dir).
 
 Usage:
     analyze [--model MODEL] [--thinking low|medium|high] [--output-dir DIR]
-            [--quiet] <file>...
+            [--system-prompt FILE] [--quiet] <file>...
 
 The agent has access to:
   - run_shell  (perf, flamegraph, addr2line, objdump, …)
@@ -109,6 +109,13 @@ def main() -> None:
         help="Write reports here (default: same directory as the input file)",
     )
     parser.add_argument(
+        "--system-prompt",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Path to a file containing the system prompt (default: built-in prompt)",
+    )
+    parser.add_argument(
         "-q",
         "--quiet",
         action="store_true",
@@ -116,6 +123,11 @@ def main() -> None:
     )
     parser.add_argument("files", nargs="+", type=Path)
     args = parser.parse_args()
+
+    if args.system_prompt is not None:
+        system_prompt = args.system_prompt.read_text(encoding="utf-8")
+    else:
+        system_prompt = SYSTEM_PROMPT
 
     model = _make_model(args.model, args.thinking)
     errors: list[str] = []
@@ -139,7 +151,7 @@ def main() -> None:
                     prompt,
                     model,
                     extra_tools=[run_shell],
-                    system_prompt=SYSTEM_PROMPT,
+                    system_prompt=system_prompt,
                     verbose=not args.quiet,
                 )
             )
