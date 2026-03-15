@@ -435,3 +435,18 @@ class TestCleanSchema:
         schema = {"properties": {"x": {"type": "object", "additionalProperties": True}}}
         self.fix(schema)
         assert "additionalProperties" not in schema["properties"]["x"]
+
+    def test_strips_title_and_description(self):
+        schema = {
+            "title": "git_log",
+            "description": "Show the git log...",
+            "type": "object",
+            "properties": {
+                "limit": {"title": "Limit", "type": "integer", "default": 10}
+            },
+        }
+        self.fix(schema)
+        assert "title" not in schema
+        assert "description" not in schema
+        assert "title" not in schema["properties"]["limit"]
+        assert schema["properties"]["limit"]["type"] == "integer"

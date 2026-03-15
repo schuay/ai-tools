@@ -117,19 +117,16 @@ def _patch_model_class_for_tracing(model) -> None:
 # ── schema helpers ───────────────────────────────────────────────────────────
 
 
-# Keys that Gemini rejects in tool schemas.
-_UNSUPPORTED_SCHEMA_KEYS = {"additionalProperties", "$schema"}
+# Keys stripped from tool schemas to reduce token count and fix Gemini compat.
+# "title" and "description" duplicate info already in the tool definition.
+_STRIP_KEYS = {"additionalProperties", "$schema", "title", "description"}
 
 
 def _clean_schema(schema: dict) -> None:
-    """Recursively fix a tool schema for Gemini compatibility.
-
-    - Add items:{} to array types missing it
-    - Strip keys Gemini doesn't support (additionalProperties, $schema)
-    """
+    """Recursively clean a tool schema: strip redundant keys, fix arrays."""
     if not isinstance(schema, dict):
         return
-    for key in _UNSUPPORTED_SCHEMA_KEYS & schema.keys():
+    for key in _STRIP_KEYS & schema.keys():
         del schema[key]
     if schema.get("type") == "array" and "items" not in schema:
         schema["items"] = {}
