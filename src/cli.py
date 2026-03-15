@@ -40,6 +40,24 @@ def _make_key_bindings(session: Session) -> KeyBindings:
     def _interrupt(event):
         session.interrupt()
 
+    @kb.add("up")
+    def _history_back(event):
+        buf = event.current_buffer
+        # On first line: navigate history. Otherwise: move cursor up.
+        if buf.document.cursor_position_row == 0:
+            buf.history_backward()
+        else:
+            buf.cursor_up()
+
+    @kb.add("down")
+    def _history_forward(event):
+        buf = event.current_buffer
+        # On last line: navigate history. Otherwise: move cursor down.
+        if buf.document.cursor_position_row == buf.document.line_count - 1:
+            buf.history_forward()
+        else:
+            buf.cursor_down()
+
     return kb
 
 
