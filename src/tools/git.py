@@ -136,6 +136,35 @@ def git_log(
     return _git(cmd)
 
 
+def git_diff(
+    ref: str | None = None,
+    file_path: str | None = None,
+    staged: bool = False,
+    context: int = 80,
+) -> str:
+    """Show changes in the working tree, staging area, or between commits.
+
+    ref: compare against this ref (e.g. 'HEAD~1', 'main', a commit hash).
+         If omitted, shows unstaged changes (or staged if staged=True).
+    file_path: restrict diff to this file (relative to repo root)
+    staged: if True and no ref, show staged changes (git diff --cached)
+    context: maximum output lines (default 80)
+    """
+    cmd = ["git", "diff"]
+    if staged and not ref:
+        cmd.append("--cached")
+    if ref:
+        cmd.append(ref)
+    if file_path:
+        cmd += ["--", file_path]
+    return cap_lines(_git(cmd), context)
+
+
+def git_status() -> str:
+    """Show the working tree status: modified, staged, and untracked files."""
+    return _git(["git", "status", "--short"])
+
+
 # ── plumbing (non-tool helpers used by repowatcher etc.) ──────────────────────
 
 

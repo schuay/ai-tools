@@ -192,14 +192,14 @@ def make_agent(
     if extra_tools:
         tools = tools + extra_tools
 
-    tools = [
-        _fix_tool_schema(
-            StructuredTool.from_function(t, handle_tool_error=True)
-            if callable(t) and not isinstance(t, StructuredTool)
-            else t
-        )
-        for t in tools
-    ]
+    fixed_tools = []
+    for t in tools:
+        if callable(t) and not isinstance(t, StructuredTool):
+            t = StructuredTool.from_function(t, handle_tool_error=True)
+        elif hasattr(t, "handle_tool_error"):
+            t.handle_tool_error = True
+        fixed_tools.append(_fix_tool_schema(t))
+    tools = fixed_tools
 
     # FilesystemBackend is used by SummarizationMiddleware for history storage only —
     # no filesystem tools are exposed to agents (FilesystemMiddleware is intentionally absent).

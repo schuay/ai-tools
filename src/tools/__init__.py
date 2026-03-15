@@ -14,11 +14,13 @@ from tools.git import (
     git_commit_meta,
     git_commits_since,
     git_commits_since_date,
+    git_diff,
     git_fetch,
     git_grep,
     git_log,
     git_resolve,
     git_show,
+    git_status,
     in_git_repo,
     read_around,
 )
@@ -152,7 +154,15 @@ def standard_tools(
         tools.append(web_fetch)
 
     if git and in_git_repo():
-        tools += [git_grep, git_show, git_blame, git_log, read_around]
+        tools += [
+            git_grep,
+            git_show,
+            git_blame,
+            git_log,
+            git_diff,
+            git_status,
+            read_around,
+        ]
 
     if fs:
         tools += [read_file, grep_files, list_dir, edit_file, write_file]

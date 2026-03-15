@@ -1,25 +1,27 @@
 """
 Terminal CLI for the multi-agent assistant.
 
-Uses prompt_toolkit for input and rich Console for styled output.
-All agent logic lives in session.py.
+Uses prompt_toolkit for input (with patch_stdout so the prompt stays
+visible while the agent streams output above it) and rich Console for
+styled output.  All agent logic lives in session.py.
 """
 
 import sys
+import threading
+from threading import Thread
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
-from rich.text import Text
 
 from session import Session
 
 PASTE_COLLAPSE_THRESHOLD = 3  # lines
 
 
-def _make_key_bindings() -> KeyBindings:
+def _make_key_bindings(session: Session) -> KeyBindings:
     kb = KeyBindings()
 
     @kb.add("enter")
@@ -27,64 +29,80 @@ def _make_key_bindings() -> KeyBindings:
         event.current_buffer.validate_and_handle()
 
     @kb.add("escape", "enter")  # Alt+Enter → newline
-    def _newline(event):
+    def _newline_alt(event):
         event.current_buffer.insert_text("\n")
+
+    @kb.add("c-j")  # Ctrl+J → newline (matches old TUI)
+    def _newline_ctrl(event):
+        event.current_buffer.insert_text("\n")
+
+    @kb.add("escape")  # Escape → interrupt agent
+    def _interrupt(event):
+        session.interrupt()
 
     return kb
 
 
 class TerminalIO:
-    """SessionIO implementation: rich Console for output, prompt_toolkit for input."""
+    """SessionIO implementation: rich Console for output."""
 
-    def __init__(self) -> None:
-        self._console = Console(highlight=False)
-        self._prompt_session = PromptSession(
-            key_bindings=_make_key_bindings(),
+    def __init__(self, console: Console) -> None:
+        self._console = console
+
+    def write(self, text: str, style: str | None = None) -> None:
+        self._console.print(text, style=style, highlight=False, markup=False)
+
+    def set_status(self, text: str) -> None:
+        pass  # no status bar in terminal mode
+
+
+def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
+    if args.exc_type is SystemExit:
+        return
+    import traceback
+
+    traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+    sys.stderr.flush()
+
+
+def main() -> None:
+    threading.excepthook = _thread_excepthook
+    prompt_text = " ".join(sys.argv[1:])
+
+    with patch_stdout(raw=True):
+        console = Console(force_terminal=True, highlight=False)
+        io = TerminalIO(console)
+        session = Session(io=io, prompt=prompt_text)
+
+        worker = Thread(target=session.run, daemon=True)
+        worker.start()
+
+        ps = PromptSession(
+            key_bindings=_make_key_bindings(session),
             multiline=True,
             history=InMemoryHistory(),
             prompt_continuation="  ",
         )
 
-    def write(self, text: str, style: str | None = None) -> None:
-        if style:
-            self._console.print(Text(text, style=style), highlight=False)
-        else:
-            self._console.print(text, highlight=False)
-
-    def set_status(self, text: str) -> None:
-        pass  # no status bar in terminal mode
-
-    def get_input(self, prompt: str = "> ") -> str:
-        """Block until the user submits non-empty input."""
-        while True:
+        while worker.is_alive():
             try:
-                text = self._prompt_session.prompt(
-                    HTML(f"<b>{prompt}</b>"),
-                )
-                text = text.strip()
+                text = ps.prompt("> ").strip()
                 if not text:
                     continue
                 lines = text.splitlines()
                 if len(lines) > PASTE_COLLAPSE_THRESHOLD:
                     first = lines[0][:60]
-                    self.write(f"> {first}… [{len(lines)} lines]", style="bold green")
+                    io.write(f"> {first}… [{len(lines)} lines]", style="bold green")
                 else:
-                    self.write(f"> {text}", style="bold green")
-                return text
+                    io.write(f"> {text}", style="bold green")
+                session.submit(text)
             except KeyboardInterrupt:
                 continue  # Ctrl+C clears current input
             except EOFError:
-                raise SystemExit(0)  # Ctrl+D exits
+                session.stop()
+                break
 
-
-def main() -> None:
-    prompt = " ".join(sys.argv[1:])
-    io = TerminalIO()
-    session = Session(io=io, prompt=prompt)
-    try:
-        session.run()
-    except (SystemExit, KeyboardInterrupt):
-        session.stop()
+        worker.join(timeout=2)
 
 
 if __name__ == "__main__":

@@ -491,7 +491,9 @@ class Session:
                         mcp_tools: list = []
                         for name, sess in sessions.items():
                             mcp_tools.extend(
-                                await load_mcp_tools(sess, server_name=name)
+                                await load_mcp_tools(
+                                    sess, server_name=name, tool_name_prefix=True
+                                )
                             )
                         turn_agent = self._build_agent(
                             agent_name,
@@ -618,6 +620,7 @@ class Session:
         seen_tool_ids: set[str] = set()
         tool_call_args: dict[str, str] = {}
         tool_call_names: dict[str, str] = {}
+        pending_tool_ids: list[str] = []
         buf = _LineBuffer(self._io)
         last_activity = time.monotonic()
         shown_wait_secs = 0
@@ -691,21 +694,29 @@ class Session:
                     if tc.get("name") and tool_id and tool_id not in seen_tool_ids:
                         seen_tool_ids.add(tool_id)
                         tool_call_names[tool_id] = tc["name"]
+                        pending_tool_ids.append(tool_id)
                 continue
 
-            if isinstance(chunk, ToolMessage):
+            # Args are fully streamed once we see a non-tool-call event.
+            if pending_tool_ids:
                 buf.flush()
                 current_block = None
-                name = tool_call_names.get(chunk.tool_call_id, "tool")
-                raw_args = tool_call_args.get(chunk.tool_call_id, "")
-                args_str = ""
-                if raw_args:
-                    try:
-                        parsed = json.loads(raw_args)
-                        args_str = ", ".join(f"{k}={v!r}" for k, v in parsed.items())
-                    except json.JSONDecodeError:
-                        args_str = raw_args
-                self._io.write(f"[tool] {name}({args_str})", style="bold dim")
+                for tid in pending_tool_ids:
+                    name = tool_call_names.get(tid, "tool")
+                    raw_args = tool_call_args.get(tid, "")
+                    args_str = ""
+                    if raw_args:
+                        try:
+                            parsed = json.loads(raw_args)
+                            args_str = ", ".join(
+                                f"{k}={v!r}" for k, v in parsed.items()
+                            )
+                        except json.JSONDecodeError:
+                            args_str = raw_args
+                    self._io.write(f"[tool] {name}({args_str})", style="bold dim")
+                pending_tool_ids.clear()
+
+            if isinstance(chunk, ToolMessage):
                 output = str(chunk.content)
                 lines = output.splitlines()
                 if lines:
