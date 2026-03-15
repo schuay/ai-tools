@@ -67,7 +67,13 @@ def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
 
 def main() -> None:
     threading.excepthook = _thread_excepthook
-    prompt_text = " ".join(sys.argv[1:])
+    args = sys.argv[1:]
+    if "--trace" in args:
+        args.remove("--trace")
+        from graph import enable_tracing
+
+        enable_tracing()
+    prompt_text = " ".join(args)
 
     with patch_stdout(raw=True):
         console = Console(force_terminal=True, highlight=False)

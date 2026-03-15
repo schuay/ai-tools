@@ -21,6 +21,98 @@ from deepagents.middleware.summarization import (
 
 from tools import REPO_ROOT, standard_tools
 
+# ── tracing ──────────────────────────────────────────────────────────────────
+#
+# Enable with: agent --trace ...
+# Logs to stderr: agent setup (system prompt + tools), model calls (messages).
+
+import sys
+
+TRACE = False  # set by cli.py from --trace flag
+
+
+def enable_tracing() -> None:
+    """Turn on tracing output to stderr."""
+    global TRACE
+    TRACE = True
+
+
+def _trace(msg: str) -> None:
+    """Write a trace line to stderr."""
+    print(msg, file=sys.stderr)
+
+
+def _trace_agent_setup(system_prompt: str, tools: list) -> None:
+    """Log system prompt size and per-tool description/schema sizes."""
+    _trace("\n=== AGENT SETUP ===")
+    _trace(f"System prompt: {len(system_prompt)} chars")
+    _trace(f"Tools: {len(tools)}")
+    for t in tools:
+        name = getattr(t, "name", "?")
+        desc = getattr(t, "description", "") or ""
+        schema = getattr(t, "args_schema", None)
+        if schema is not None:
+            schema_str = str(
+                schema.model_json_schema()
+                if hasattr(schema, "model_json_schema")
+                else schema
+            )
+        else:
+            schema_str = ""
+        _trace(f"  {name}: desc={len(desc)} schema={len(schema_str)}")
+    _trace("=== END AGENT SETUP ===\n")
+
+
+def _trace_messages(messages) -> None:
+    """Log each message role and size before a model call."""
+    _trace("\n=== MODEL CALL ===")
+    total_chars = 0
+    for msg in messages:
+        role = getattr(msg, "type", getattr(msg, "role", "?"))
+        content = getattr(msg, "content", "")
+        if isinstance(content, list):
+            chars = sum(len(str(p)) for p in content)
+        else:
+            chars = len(str(content))
+        total_chars += chars
+        preview = str(content)[:120].replace("\n", "\\n")
+        _trace(f"  [{role}] {chars} chars: {preview}")
+    _trace(f"Total: {total_chars} chars")
+    _trace("=== END MODEL CALL ===\n")
+
+
+_patched_classes: set[type] = set()
+
+
+def _patch_model_class_for_tracing(model) -> None:
+    """Monkey-patch the model class to log messages on _generate/_astream."""
+    cls = type(model)
+    if cls in _patched_classes:
+        return
+    _patched_classes.add(cls)
+
+    orig_generate = cls._generate
+
+    def traced_generate(self, messages, stop=None, run_manager=None, **kwargs):
+        _trace_messages(messages)
+        return orig_generate(
+            self, messages, stop=stop, run_manager=run_manager, **kwargs
+        )
+
+    cls._generate = traced_generate
+
+    if hasattr(cls, "_astream"):
+        orig_astream = cls._astream
+
+        async def traced_astream(self, messages, stop=None, run_manager=None, **kwargs):
+            _trace_messages(messages)
+            async for chunk in orig_astream(
+                self, messages, stop=stop, run_manager=run_manager, **kwargs
+            ):
+                yield chunk
+
+        cls._astream = traced_astream
+
 
 # ── schema helpers ───────────────────────────────────────────────────────────
 
@@ -197,6 +289,8 @@ def make_agent(
     system_prompt: str | None = None,
 ):
     model = model or _default_model
+    if TRACE:
+        _patch_model_class_for_tracing(model)
     identity = _identity_section(name, agents) if name and agents else ""
     tools = standard_tools(fs=True)
     # ask_user uses LangGraph interrupt() — only meaningful in interactive sessions
@@ -256,6 +350,9 @@ def make_agent(
     system_prompt = system_prompt or (
         identity + v8_instructions + "\n\n" + BASE_AGENT_PROMPT
     )
+
+    if TRACE:
+        _trace_agent_setup(system_prompt, tools)
 
     return create_agent(
         model,
