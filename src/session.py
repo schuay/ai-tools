@@ -69,7 +69,15 @@ from tools.fs import preview_diff, preview_write
 
 
 class SessionIO(Protocol):
-    """What the Session needs from the UI. Called from the worker thread."""
+    """What the Session needs from the UI.
+
+    write / set_status are called from the worker thread (or main thread
+    when using get_input mode).
+
+    get_input is optional.  When provided, _wait_input calls it directly
+    instead of blocking on threading Events — this lets the session run
+    on the main thread without a separate UI thread.
+    """
 
     def write(self, text: str, style: str | None = None) -> None: ...
     def set_status(self, text: str) -> None: ...
@@ -99,6 +107,10 @@ class _LoggingIO:
         """Write a line directly to the log (e.g. user input) without sending to UI."""
         if not self._f.closed:
             self._f.write(text + "\n")
+
+    def __getattr__(self, name: str):
+        """Delegate unknown attributes (e.g. get_input) to the inner IO."""
+        return getattr(self._inner, name)
 
     def close(self) -> None:
         self._f.close()
@@ -287,6 +299,8 @@ class Session:
         if self._mcp_server_names:
             self._io.write(f"  mcp: {', '.join(self._mcp_server_names)}", style="dim")
         try:
+            if self._prompt:
+                self._io.write(f"> {self._prompt}", style="bold green")
             user_msg = self._prompt or self._wait_input("> ")
         except _Stopped:
             return
@@ -633,6 +647,10 @@ class Session:
                     self._io.set_status(f"Waiting… ({elapsed}s)")
                     shown_wait_secs = elapsed
                 continue
+            except KeyboardInterrupt:
+                buf.flush()
+                _cancel_mcp_producer()
+                raise _Interrupted()
 
             last_activity = time.monotonic()
             shown_wait_secs = 0
@@ -875,7 +893,18 @@ class Session:
     # ── input synchronisation ────────────────────────────────────────────────
 
     def _wait_input(self, prompt: str = "> ") -> str:
-        """Block the worker thread until submit() is called. Returns the submitted text."""
+        """Block until user input is available. Returns the submitted text.
+
+        If the IO provides get_input(), calls it directly (main-thread mode).
+        Otherwise falls back to the Event-based mechanism for threaded UIs.
+        """
+        get_input = getattr(self._io, "get_input", None)
+        if get_input is not None:
+            result = get_input(prompt)
+            if self._stop.is_set():
+                raise _Stopped()
+            return result
+
         self._waiting_for_input = True
         self._input_event.clear()
         self._io.set_status(prompt)
