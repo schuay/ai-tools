@@ -624,7 +624,8 @@ class Session:
         buf = _LineBuffer(self._io)
         last_activity = time.monotonic()
         shown_wait_secs = 0
-        usage: dict | None = None
+        total_input_tokens = 0
+        total_output_tokens = 0
 
         while True:
             # Check control events before blocking on the next chunk.
@@ -683,8 +684,8 @@ class Session:
 
             if isinstance(chunk, AIMessageChunk) and chunk.usage_metadata:
                 um = chunk.usage_metadata
-                if um.get("input_tokens") or um.get("output_tokens"):
-                    usage = um
+                total_input_tokens += um.get("input_tokens", 0)
+                total_output_tokens += um.get("output_tokens", 0)
 
             if isinstance(chunk, AIMessageChunk) and chunk.tool_call_chunks:
                 for tc in chunk.tool_call_chunks:
@@ -780,15 +781,15 @@ class Session:
                             buf.push(text)
 
         buf.flush()
-        if usage:
-            inp = usage.get("input_tokens", 0)
-            out = usage.get("output_tokens", 0)
-            if inp or out:
+        if total_input_tokens or total_output_tokens:
 
-                def _fmt(n: int) -> str:
-                    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+            def _fmt(n: int) -> str:
+                return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
 
-                self._io.write(f"({_fmt(inp)} in, {_fmt(out)} out)", style="dim")
+            self._io.write(
+                f"({_fmt(total_input_tokens)} in, {_fmt(total_output_tokens)} out)",
+                style="dim",
+            )
         return False, None, text_parts
 
     # ── routing ──────────────────────────────────────────────────────────────
