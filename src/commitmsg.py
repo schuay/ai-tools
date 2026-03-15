@@ -13,12 +13,10 @@ Usage:
 
 import argparse
 import subprocess
-import sys
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from tools import git_blame, git_log, git_show, read_around
+from tools import git_blame, git_log, git_show, invoke_with_tools, read_around
 
 # ── model ─────────────────────────────────────────────────────────────────────
 
@@ -67,18 +65,6 @@ def _run_git(*args: str) -> str:
     return r.stdout if r.returncode == 0 else f"Error: {r.stderr.strip()}"
 
 
-def _extract_text(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            b.get("text", "")
-            for b in content
-            if isinstance(b, dict) and b.get("type") == "text"
-        )
-    return str(content)
-
-
 # ── core ──────────────────────────────────────────────────────────────────────
 
 
@@ -99,30 +85,14 @@ def run(all_changes: bool = False, full: bool = False) -> str:
         diff_content = diff
 
     system_prompt = SYSTEM_PROMPT_FULL if full else SYSTEM_PROMPT_ONELINE
-    tools = [git_show, read_around, git_blame, git_log]
+    tools = [git_show, read_around, git_blame, git_log] if full else []
     kwargs = MODEL_KWARGS if full else {**MODEL_KWARGS, "thinking_level": "minimal"}
-    base_model = init_chat_model(MODEL_ID, **kwargs)
-    model = base_model.bind_tools(tools) if full else base_model
-    tool_map = {fn.__name__: fn for fn in tools}
+    model = init_chat_model(MODEL_ID, **kwargs)
 
-    messages: list = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"<diff>\n{diff_content}\n</diff>"),
-    ]
-
-    while True:
-        response: AIMessage = model.invoke(messages)
-        messages.append(response)
-
-        if not getattr(response, "tool_calls", None):
-            return _extract_text(response.content).strip()
-
-        for tc in response.tool_calls:
-            try:
-                result = tool_map[tc["name"]](**tc["args"])
-            except Exception as e:
-                result = f"Error: {e}"
-            messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+    text, _ = invoke_with_tools(
+        model, tools, system_prompt, f"<diff>\n{diff_content}\n</diff>"
+    )
+    return text
 
 
 # ── entry point ───────────────────────────────────────────────────────────────

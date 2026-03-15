@@ -216,33 +216,29 @@ def make_agent(
             truncate_args_settings=summarization_defaults["truncate_args_settings"],
         )
 
-    # ── GP subagent middleware (no FilesystemMiddleware) ──────────────────────
-    gp_middleware = [
-        TodoListMiddleware(),
-        _summarization(),
-        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
-        PatchToolCallsMiddleware(),
-    ]
-    if interrupt_on:
-        gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+    def _middleware(extra: list | None = None) -> list:
+        mw = [TodoListMiddleware()]
+        if extra:
+            mw.extend(extra)
+        mw += [
+            _summarization(),
+            AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+            PatchToolCallsMiddleware(),
+        ]
+        if interrupt_on:
+            mw.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+        return mw
 
     gp_subagent = {
         **GENERAL_PURPOSE_SUBAGENT,
         "model": model,
         "tools": tools,
-        "middleware": gp_middleware,
+        "middleware": _middleware(),
     }
 
-    # ── Main agent middleware (no FilesystemMiddleware) ───────────────────────
-    middleware = [
-        TodoListMiddleware(),
-        SubAgentMiddleware(backend=backend, subagents=[gp_subagent]),
-        _summarization(),
-        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
-        PatchToolCallsMiddleware(),
-    ]
-    if interrupt_on:
-        middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+    middleware = _middleware(
+        [SubAgentMiddleware(backend=backend, subagents=[gp_subagent])]
+    )
 
     system_prompt = system_prompt or (
         identity + v8_instructions + "\n\n" + BASE_AGENT_PROMPT

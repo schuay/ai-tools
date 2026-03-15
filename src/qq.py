@@ -17,13 +17,11 @@ import re
 import sys
 from argparse import ArgumentParser
 from datetime import date
-from pathlib import Path
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from platformdirs import user_config_path
 
-from tools import standard_tools
+from tools import invoke_with_tools, standard_tools
 
 # ── model ─────────────────────────────────────────────────────────────────────
 
@@ -73,18 +71,6 @@ def _build_system_prompt() -> str:
 
 
 # ── core ──────────────────────────────────────────────────────────────────────
-
-
-def _extract_text(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            b.get("text", "")
-            for b in content
-            if isinstance(b, dict) and b.get("type") == "text"
-        )
-    return str(content)
 
 
 STDIN_INLINE_LIMIT = 8_000  # chars; beyond this, expose grep/read tools instead
@@ -144,27 +130,9 @@ def run(query: str, stdin_data: str) -> str:
                 f"</stdin>"
             )
 
-    model = init_chat_model(MODEL_ID, **MODEL_KWARGS).bind_tools(tools)
-    tool_map = {fn.__name__: fn for fn in tools}
-
-    messages: list = [
-        SystemMessage(content=_build_system_prompt()),
-        HumanMessage(content=human_content),
-    ]
-
-    while True:
-        response: AIMessage = model.invoke(messages)
-        messages.append(response)
-
-        if not response.tool_calls:
-            return _extract_text(response.content)
-
-        for tc in response.tool_calls:
-            try:
-                result = tool_map[tc["name"]](**tc["args"])
-            except Exception as e:
-                result = f"Error: {e}"
-            messages.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
+    model = init_chat_model(MODEL_ID, **MODEL_KWARGS)
+    text, _ = invoke_with_tools(model, tools, _build_system_prompt(), human_content)
+    return text
 
 
 # ── entry point ───────────────────────────────────────────────────────────────

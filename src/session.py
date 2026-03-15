@@ -26,16 +26,20 @@ from threading import Event, Thread
 from typing import Protocol
 
 
+_PROVIDER_KEYS = {
+    "openai:": "OPENAI_API_KEY",
+    "anthropic:": "ANTHROPIC_API_KEY",
+    "google_genai:": "GOOGLE_API_KEY",
+    "deepseek:": "DEEPSEEK_API_KEY",
+    "deepseek-": "DEEPSEEK_API_KEY",
+}
+
+
 def _provider_key_var(model_id: str) -> str | None:
     """Return the env-var name required by this model_id's provider, or None."""
-    if model_id.startswith("openai:"):
-        return "OPENAI_API_KEY"
-    if model_id.startswith("anthropic:"):
-        return "ANTHROPIC_API_KEY"
-    if model_id.startswith("google_genai:"):
-        return "GOOGLE_API_KEY"
-    if model_id.startswith("deepseek:") or model_id.startswith("deepseek-"):
-        return "DEEPSEEK_API_KEY"
+    for prefix, key in _PROVIDER_KEYS.items():
+        if model_id.startswith(prefix):
+            return key
     return None
 
 
@@ -267,6 +271,11 @@ class Session:
             self._steer_value = text
             self._steer_event.set()
 
+    def _record_turn(self, user_msg: str, assistant_content: str) -> None:
+        self._history.append({"role": "user", "content": user_msg})
+        self._history.append({"role": "assistant", "content": assistant_content})
+        self._agent_history_offset[self._last_agent] = len(self._history)
+
     def run(self) -> None:
         """Main loop. Blocks; run on a dedicated worker thread."""
         self._mcp_client, self._mcp_server_names = self._init_mcp()
@@ -290,21 +299,13 @@ class Session:
                 except _Stopped:
                     raise
                 except _Interrupted:
-                    self._history.append({"role": "user", "content": user_msg})
-                    self._history.append(
-                        {"role": "assistant", "content": "[interrupted]"}
-                    )
-                    self._agent_history_offset[self._last_agent] = len(self._history)
+                    self._record_turn(user_msg, "[interrupted]")
                     self._io.write("[interrupted]", style="bold yellow")
                     user_msg = self._wait_input("> ")
                     force_agent = None
                     continue
                 except Exception as e:
-                    self._history.append({"role": "user", "content": user_msg})
-                    self._history.append(
-                        {"role": "assistant", "content": f"[error: {type(e).__name__}]"}
-                    )
-                    self._agent_history_offset[self._last_agent] = len(self._history)
+                    self._record_turn(user_msg, f"[error: {type(e).__name__}]")
                     self._io.write(
                         f"[error] {type(e).__name__}: {str(e)}\n{traceback.format_exc()}",
                         style="bold red",
@@ -313,15 +314,11 @@ class Session:
                     force_agent = None
                     continue
                 if steered:
-                    self._history.append({"role": "user", "content": user_msg})
-                    self._history.append({"role": "assistant", "content": "[steered]"})
-                    self._agent_history_offset[self._last_agent] = len(self._history)
+                    self._record_turn(user_msg, "[steered]")
                     user_msg = self._steer_value
                     force_agent = self._last_agent  # stay on the active agent
                     continue
-                self._history.append({"role": "user", "content": user_msg})
-                self._history.append({"role": "assistant", "content": response})
-                self._agent_history_offset[self._last_agent] = len(self._history)
+                self._record_turn(user_msg, response)
                 user_msg = self._wait_input("> ")
                 force_agent = None
         except _Stopped:
@@ -593,9 +590,11 @@ class Session:
         def _cancel_mcp_producer() -> None:
             """Cancel any running async tasks on the MCP loop and join the thread."""
             if async_agent_runner is not None and producer_thread.is_alive():
+
                 def _cancel() -> None:
                     for task in asyncio.all_tasks(self._loop):
                         task.cancel()
+
                 self._loop.call_soon_threadsafe(_cancel)
                 producer_thread.join(timeout=5.0)
 
@@ -693,10 +692,10 @@ class Session:
                     except json.JSONDecodeError:
                         args_str = raw_args
                     self._io.write(f"  ({args_str})", style="dim")
-                self._io.write(
-                    f"  → {str(chunk.content)[:120].replace(chr(10), ' ')}…",
-                    style="dim",
-                )
+                preview = str(chunk.content)[:120].replace("\n", " ")
+                if len(str(chunk.content)) > 120:
+                    preview += "…"
+                self._io.write(f"  → {preview}", style="dim")
                 continue
 
             if not isinstance(chunk, AIMessageChunk) or not chunk.content:

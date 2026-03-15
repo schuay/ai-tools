@@ -15,6 +15,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from tools._text import cap_lines, resolve_path, trim_to_context
+
 
 # ── fuzzy matching (internal) ─────────────────────────────────────────────────
 
@@ -84,7 +86,7 @@ def _unified_diff(original: str, modified: str, name: str) -> str:
 
 def preview_diff(path: str, search: str, replace: str) -> str:
     """Unified diff for an edit_file operation (shown to user at approval time)."""
-    file_path = Path(path).expanduser()
+    file_path = resolve_path(path)
     if not file_path.exists():
         return f"Error: {path} does not exist"
     try:
@@ -108,7 +110,7 @@ def preview_diff(path: str, search: str, replace: str) -> str:
 
 def preview_write(path: str, content: str) -> str:
     """Unified diff for a write_file operation (shown to user at approval time)."""
-    file_path = Path(path).expanduser()
+    file_path = resolve_path(path)
     original = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
     return _unified_diff(original, content, file_path.name)
 
@@ -129,9 +131,7 @@ def read_file(
     context: lines to show around `line` (default 80); when line is not given,
              the full file is returned
     """
-    file_path = Path(path).expanduser()
-    if not file_path.is_absolute():
-        file_path = Path(os.getcwd()) / file_path
+    file_path = resolve_path(path)
     if not file_path.exists():
         return f"Error: {path} does not exist"
     if not file_path.is_file():
@@ -141,11 +141,9 @@ def read_file(
     except Exception as e:
         return f"Error reading {path}: {e}"
 
-    from tools.git import _CHARS_PER_LINE, _cap_chars, trim_to_context
-
     if line is not None:
         return trim_to_context(content, line, context)
-    return _cap_chars(content, context * _CHARS_PER_LINE)
+    return cap_lines(content, context)
 
 
 def grep_files(
@@ -177,17 +175,9 @@ def grep_files(
     out = r.stdout if r.returncode in (0, 1) else f"Error: {r.stderr.strip()}"
     if not out.strip():
         return "No matches found."
-    from tools.git import _CHARS_PER_LINE, _cap_chars, trim_to_context
-
     if line is not None:
         return trim_to_context(out, line, context)
-    lines = out.splitlines(keepends=True)
-    if len(lines) > context:
-        out = (
-            "".join(lines[:context])
-            + f"\n[truncated — {len(lines) - context} more lines; use line= to navigate]"
-        )
-    return _cap_chars(out, context * _CHARS_PER_LINE)
+    return cap_lines(out, context)
 
 
 def list_dir(path: str = ".") -> str:
@@ -239,7 +229,7 @@ def edit_file(path: str, search: str, replace: str) -> str:
     search:  the existing code to find (verbatim, with context lines)
     replace: the new code that replaces the search block exactly
     """
-    file_path = Path(path).expanduser()
+    file_path = resolve_path(path)
     if not file_path.exists():
         return f"Error: {path} does not exist"
 
@@ -276,7 +266,7 @@ def write_file(path: str, content: str) -> str:
     path:    absolute path or path relative to the working directory
     content: the full text content to write
     """
-    file_path = Path(path) if Path(path).is_absolute() else Path(os.getcwd()) / path
+    file_path = resolve_path(path)
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")

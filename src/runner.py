@@ -52,7 +52,7 @@ async def _astream_to_text(agent, prompt: str, *, config: dict, verbose: bool) -
             namespace, mode, data = item
 
             # ── interrupt (ask_user) ──────────────────────────────────────────
-            if mode == "updates" and "__interrupt__" in data:
+            if mode == "updates" and data.get("__interrupt__"):
                 value = data["__interrupt__"][0].value
                 if verbose and isinstance(value, dict) and "question" in value:
                     print(

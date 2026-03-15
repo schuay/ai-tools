@@ -12,21 +12,20 @@ import argparse
 import json
 import logging
 import queue
-import random
 import re
 import signal
 import sys
 import threading
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 import tools.git as _git_mod
 from tools import (
+    extract_text,
     git_blame,
     git_commit_meta,
     git_commits_since,
@@ -36,6 +35,7 @@ from tools import (
     git_log,
     git_resolve,
     git_show,
+    invoke_with_tools,
     read_around,
 )
 
@@ -44,7 +44,6 @@ from tools import (
 DEFAULT_MODEL = "google_genai:gemini-3.1-pro-preview"
 FILTER_MODEL = "google_genai:gemini-3-flash-preview"
 MODEL_KWARGS = {"include_thoughts": True, "thinking_level": "low"}
-MAX_TOOL_OUTPUT = 50_000  # chars; safety cap for runaway tool output
 
 FILTER_SYSTEM = """\
 You are a senior engineer triaging git commits to decide if they warrant deeper analysis.
@@ -180,99 +179,6 @@ class _RunStats:
         )
 
 
-# ── LLM helpers ───────────────────────────────────────────────────────────────
-
-
-def _extract_text(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            b.get("text", "")
-            for b in content
-            if isinstance(b, dict) and b.get("type") == "text"
-        )
-    return str(content)
-
-
-def _token_count(msg: AIMessage) -> int:
-    m = getattr(msg, "usage_metadata", None)
-    if isinstance(m, dict):
-        return m.get("total_tokens", 0)
-    return 0
-
-
-def _is_rate_limit(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return any(
-        k in msg
-        for k in ("429", "quota", "rate limit", "resource_exhausted", "exhausted")
-    )
-
-
-def _invoke_with_backoff(fn, *args, max_retries: int = 8, **kwargs):
-    """Call fn(*args, **kwargs), retrying with exponential backoff on rate-limit errors."""
-    for attempt in range(max_retries):
-        try:
-            return fn(*args, **kwargs)
-        except Exception as e:
-            if not _is_rate_limit(e):
-                raise
-            wait = (2**attempt) + random.uniform(0, 1)
-            logging.warning(
-                "Rate limited — retrying in %.0fs (attempt %d/%d)",
-                wait,
-                attempt + 1,
-                max_retries,
-            )
-            time.sleep(wait)
-    raise RuntimeError(f"Rate limit persisted after {max_retries} retries")
-
-
-def _run_agent(
-    model,
-    tools: list,
-    system_prompt: str,
-    user_prompt: str,
-    stop_event: threading.Event | None = None,
-) -> tuple[str, int]:
-    tool_map = {fn.__name__: fn for fn in tools}
-    bound = model.bind_tools(tools)
-    messages: list = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_prompt),
-    ]
-    total_tokens = 0
-    turn = 0
-    while True:
-        if stop_event and stop_event.is_set():
-            raise InterruptedError("stop requested")
-        history_chars = sum(len(str(m.content)) for m in messages)
-        logging.debug("turn=%d  history=%d chars", turn, history_chars)
-        response: AIMessage = _invoke_with_backoff(bound.invoke, messages)
-        turn_tokens = _token_count(response)
-        total_tokens += turn_tokens
-        messages.append(response)
-        if not response.tool_calls:
-            logging.debug("turn=%d  tokens=%d  → done", turn, turn_tokens)
-            return _extract_text(response.content).strip(), total_tokens
-        calls = ", ".join(tc["name"] for tc in response.tool_calls)
-        logging.debug("turn=%d  tokens=%d  → calls: %s", turn, turn_tokens, calls)
-        for tc in response.tool_calls:
-            try:
-                result = str(tool_map[tc["name"]](**tc["args"]))
-            except Exception as e:
-                result = f"Error: {e}"
-            if len(result) > MAX_TOOL_OUTPUT:
-                result = (
-                    result[:MAX_TOOL_OUTPUT]
-                    + f"\n… (truncated at {MAX_TOOL_OUTPUT} chars)"
-                )
-            logging.debug("  %s → %d chars", tc["name"], len(result))
-            messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
-        turn += 1
-
-
 # ── filter & analysis ─────────────────────────────────────────────────────────
 
 
@@ -281,6 +187,8 @@ def is_interesting(meta: dict, filter_model) -> tuple[bool, int]:
     if meta.get("body"):
         msg += "\n\n" + meta["body"]
     prompt = f"author: {meta['author']}\ndate: {meta['date']}\n\n{msg}"
+    from tools import _invoke_with_backoff, _token_count
+
     response = _invoke_with_backoff(
         filter_model.invoke,
         [
@@ -288,7 +196,7 @@ def is_interesting(meta: dict, filter_model) -> tuple[bool, int]:
             HumanMessage(content=prompt),
         ],
     )
-    verdict = _extract_text(response.content).strip().upper()
+    verdict = extract_text(response.content).strip().upper()
     return verdict.startswith("INTERESTING"), _token_count(response)
 
 
@@ -306,7 +214,9 @@ def analyse_commit(
         f"Date:    {meta['date']}\n\n"
         "Use git tools to gather the full context before writing your analysis."
     )
-    return _run_agent(analysis_model, tools, ANALYSIS_SYSTEM, user_prompt, stop_event)
+    return invoke_with_tools(
+        analysis_model, tools, ANALYSIS_SYSTEM, user_prompt, stop_event=stop_event
+    )
 
 
 # ── output ────────────────────────────────────────────────────────────────────
@@ -484,6 +394,21 @@ def process_commits(
 # ── modes ─────────────────────────────────────────────────────────────────────
 
 
+def _setup_signal_handlers(stop_event: threading.Event) -> None:
+    """Install SIGINT/SIGTERM handlers that set stop_event, then restore defaults."""
+
+    def _handle(signum, frame):
+        logging.info(
+            "Signal %s received — stopping (Ctrl-C again to force quit) …", signum
+        )
+        stop_event.set()
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+    signal.signal(signal.SIGINT, _handle)
+    signal.signal(signal.SIGTERM, _handle)
+
+
 def run_range(
     repo: Path,
     output_dir: Path,
@@ -495,17 +420,7 @@ def run_range(
     workers: int = 1,
 ) -> None:
     stop_event = threading.Event()
-
-    def _handle_signal(signum, frame):
-        logging.info(
-            "Signal %s received — stopping (Ctrl-C again to force quit) …", signum
-        )
-        stop_event.set()
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)
-
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
+    _setup_signal_handlers(stop_event)
 
     from_ref = git_resolve(from_hash)
     to_ref = git_resolve(to_hash)
@@ -539,17 +454,7 @@ def run_since(
     workers: int = 1,
 ) -> None:
     stop_event = threading.Event()
-
-    def _handle_signal(signum, frame):
-        logging.info(
-            "Signal %s received — stopping (Ctrl-C again to force quit) …", signum
-        )
-        stop_event.set()
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)
-
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
+    _setup_signal_handlers(stop_event)
 
     commits = git_commits_since_date(since, ref)
     logging.info("--since %r on %s → %d commit(s)", since, ref, len(commits))
@@ -578,17 +483,7 @@ def run_daemon(
     start_from: str | None = None,
 ) -> None:
     stop_event = threading.Event()
-
-    def _handle_signal(signum, frame):
-        logging.info(
-            "Signal %s received — shutting down (Ctrl-C again to force quit) …", signum
-        )
-        stop_event.set()
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)
-
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
+    _setup_signal_handlers(stop_event)
 
     remote_ref = f"{remote}/{branch}"
 

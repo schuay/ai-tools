@@ -69,7 +69,7 @@ def _build_prompt(trace_path: Path, output_path: Path) -> str:
     return (
         f"Analyze the performance trace at: {trace_path.resolve()}\n\n"
         f"Write the complete Markdown report to: {output_path.resolve()}\n\n"
-        f"Use run_shell, read_file, grep_files, and any other tools needed to "
+        f"Use the available tools to "
         f"perform a thorough analysis. Do not stop until the report is written."
     )
 

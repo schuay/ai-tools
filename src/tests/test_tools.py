@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # ── fs helpers ────────────────────────────────────────────────────────────────
 
 from tools.fs import _find, _unified_diff, edit_file, list_dir, read_file, write_file
-from tools.git import _cap_chars, git_commit_meta, trim_to_context
+from tools._text import cap_chars, trim_to_context
+from tools.git import git_commit_meta
 from tools.shell import MAX_OUTPUT, run_shell
 
 
@@ -204,27 +205,27 @@ class TestListDir:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# _cap_chars
+# cap_chars
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 class TestCapChars:
     def test_within_limit(self):
-        assert _cap_chars("hello", 100) == "hello"
+        assert cap_chars("hello", 100) == "hello"
 
     def test_at_limit(self):
         s = "x" * 100
-        assert _cap_chars(s, 100) == s
+        assert cap_chars(s, 100) == s
 
     def test_over_limit(self):
         s = "x" * 200
-        result = _cap_chars(s, 100)
+        result = cap_chars(s, 100)
         assert result.startswith("x" * 100)
         assert "truncated" in result
         assert "100" in result  # excess chars mentioned
 
     def test_empty(self):
-        assert _cap_chars("", 100) == ""
+        assert cap_chars("", 100) == ""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
