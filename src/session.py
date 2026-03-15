@@ -603,6 +603,7 @@ class Session:
         current_ns: tuple = ()
         seen_tool_ids: set[str] = set()
         tool_call_args: dict[str, str] = {}
+        tool_call_names: dict[str, str] = {}
         buf = _LineBuffer(self._io)
         last_activity = time.monotonic()
         shown_wait_secs = 0
@@ -645,12 +646,6 @@ class Session:
 
             if namespace != current_ns:
                 current_ns = namespace
-                if namespace:
-                    buf.flush()
-                    current_block = None
-                    # namespace entries look like "node_name:uuid"; strip the uuid
-                    label = " > ".join(ns.split(":")[0] for ns in namespace)
-                    self._io.write(f"  [{label}]", style="dim")
 
             if mode == "updates" and "__interrupt__" in data:
                 buf.flush()
@@ -677,25 +672,34 @@ class Session:
                         ) + tc.get("args", "")
                     if tc.get("name") and tool_id and tool_id not in seen_tool_ids:
                         seen_tool_ids.add(tool_id)
-                        buf.flush()
-                        current_block = None
-                        self._io.write(f"[tool] {tc['name']}", style="dim")
+                        tool_call_names[tool_id] = tc["name"]
                 continue
 
             if isinstance(chunk, ToolMessage):
                 buf.flush()
+                current_block = None
+                name = tool_call_names.get(chunk.tool_call_id, "tool")
                 raw_args = tool_call_args.get(chunk.tool_call_id, "")
+                args_str = ""
                 if raw_args:
                     try:
                         parsed = json.loads(raw_args)
                         args_str = ", ".join(f"{k}={v!r}" for k, v in parsed.items())
                     except json.JSONDecodeError:
                         args_str = raw_args
-                    self._io.write(f"  ({args_str})", style="dim")
-                preview = str(chunk.content)[:120].replace("\n", " ")
-                if len(str(chunk.content)) > 120:
-                    preview += "…"
-                self._io.write(f"  → {preview}", style="dim")
+                self._io.write(f"[tool] {name}({args_str})", style="bold dim")
+                output = str(chunk.content)
+                lines = output.splitlines()
+                if lines:
+                    sep = "┄" * min(48, max(len(ln) for ln in lines[:80]))
+                    self._io.write(f"  {sep}", style="dim")
+                    for line in lines[:80]:
+                        self._io.write(f"  {line}", style="dim")
+                    if len(lines) > 80:
+                        self._io.write(
+                            f"  … ({len(lines) - 80} more lines)", style="dim"
+                        )
+                    self._io.write(f"  {sep}", style="dim")
                 continue
 
             if not isinstance(chunk, AIMessageChunk) or not chunk.content:
@@ -714,9 +718,9 @@ class Session:
                         if text := block.get("thinking", ""):
                             if current_block != "thinking":
                                 buf.flush()
-                                self._io.write("[thinking]", style="dim")
+                                self._io.write("")
                                 current_block = "thinking"
-                            buf.push(text, style="dim")
+                            buf.push(text, style="dim italic")
                     case "reasoning":
                         # OpenAI reasoning summary: "summary" is a list of
                         # {"type": "summary_text", "text": "..."} objects.
@@ -732,13 +736,14 @@ class Session:
                         if text:
                             if current_block != "reasoning":
                                 buf.flush()
-                                self._io.write("[reasoning]", style="dim")
+                                self._io.write("")
                                 current_block = "reasoning"
-                            buf.push(text, style="dim")
+                            buf.push(text, style="dim italic")
                     case "text":
                         if text := block.get("text", ""):
                             if current_block in ("thinking", "reasoning"):
                                 buf.flush()
+                                self._io.write("")
                             current_block = "text"
                             text_parts.append(text)
                             buf.push(text)
@@ -747,7 +752,11 @@ class Session:
         if usage:
             inp = usage.get("input_tokens", 0)
             out = usage.get("output_tokens", 0)
-            self._io.write(f"[tokens] in={inp} out={out}", style="dim")
+
+            def _fmt(n: int) -> str:
+                return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+            self._io.write(f"({_fmt(inp)} in, {_fmt(out)} out)", style="dim")
         return False, None, text_parts
 
     # ── routing ──────────────────────────────────────────────────────────────
