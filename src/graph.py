@@ -42,7 +42,7 @@ def _add_items_to_arrays(schema: dict) -> None:
 def _fix_tool_schema(tool: StructuredTool) -> StructuredTool:
     """Patch a tool's args_schema to add missing array items fields (Gemini)."""
     schema_cls = getattr(tool, "args_schema", None)
-    if schema_cls is None:
+    if schema_cls is None or isinstance(schema_cls, dict):
         return tool
     orig_fn = schema_cls.model_json_schema.__func__
 
