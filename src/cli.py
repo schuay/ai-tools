@@ -91,10 +91,7 @@ def main() -> None:
                     continue
                 lines = text.splitlines()
                 if len(lines) > PASTE_COLLAPSE_THRESHOLD:
-                    first = lines[0][:60]
-                    io.write(f"> {first}… [{len(lines)} lines]", style="bold green")
-                else:
-                    io.write(f"> {text}", style="bold green")
+                    io.write(f"> [{len(lines)} lines]", style="bold green")
                 session.submit(text)
             except KeyboardInterrupt:
                 continue  # Ctrl+C clears current input

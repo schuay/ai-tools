@@ -382,15 +382,15 @@ class TestStandardTools:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# _add_items_to_arrays (schema helper)
+# _clean_schema (schema helper)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-class TestAddItemsToArrays:
+class TestCleanSchema:
     def setup_method(self):
-        from graph import _add_items_to_arrays
+        from graph import _clean_schema
 
-        self.fix = _add_items_to_arrays
+        self.fix = _clean_schema
 
     def test_adds_items_to_bare_array(self):
         schema = {"type": "array"}
@@ -419,3 +419,19 @@ class TestAddItemsToArrays:
         schema = {"type": "object", "properties": {"x": {"type": "string"}}}
         self.fix(schema)
         assert "items" not in schema
+
+    def test_strips_unsupported_keys(self):
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "$schema": "http://...",
+        }
+        self.fix(schema)
+        assert "additionalProperties" not in schema
+        assert "$schema" not in schema
+        assert schema["type"] == "object"
+
+    def test_strips_nested_unsupported_keys(self):
+        schema = {"properties": {"x": {"type": "object", "additionalProperties": True}}}
+        self.fix(schema)
+        assert "additionalProperties" not in schema["properties"]["x"]

@@ -25,30 +25,43 @@ from tools import REPO_ROOT, standard_tools
 # ── schema helpers ───────────────────────────────────────────────────────────
 
 
-def _add_items_to_arrays(schema: dict) -> None:
-    """Recursively add items:{} to array types missing it (required by Gemini)."""
+# Keys that Gemini rejects in tool schemas.
+_UNSUPPORTED_SCHEMA_KEYS = {"additionalProperties", "$schema"}
+
+
+def _clean_schema(schema: dict) -> None:
+    """Recursively fix a tool schema for Gemini compatibility.
+
+    - Add items:{} to array types missing it
+    - Strip keys Gemini doesn't support (additionalProperties, $schema)
+    """
     if not isinstance(schema, dict):
         return
+    for key in _UNSUPPORTED_SCHEMA_KEYS & schema.keys():
+        del schema[key]
     if schema.get("type") == "array" and "items" not in schema:
         schema["items"] = {}
     for v in schema.values():
         if isinstance(v, dict):
-            _add_items_to_arrays(v)
+            _clean_schema(v)
         elif isinstance(v, list):
             for item in v:
-                _add_items_to_arrays(item)
+                _clean_schema(item)
 
 
 def _fix_tool_schema(tool: StructuredTool) -> StructuredTool:
-    """Patch a tool's args_schema to add missing array items fields (Gemini)."""
+    """Patch a tool's args_schema for Gemini compatibility."""
     schema_cls = getattr(tool, "args_schema", None)
-    if schema_cls is None or isinstance(schema_cls, dict):
+    if schema_cls is None:
+        return tool
+    if isinstance(schema_cls, dict):
+        _clean_schema(schema_cls)
         return tool
     orig_fn = schema_cls.model_json_schema.__func__
 
     def patched(cls, **kwargs):
         s = copy.deepcopy(orig_fn(cls, **kwargs))
-        _add_items_to_arrays(s)
+        _clean_schema(s)
         return s
 
     schema_cls.model_json_schema = classmethod(patched)

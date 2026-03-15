@@ -682,7 +682,9 @@ class Session:
             chunk, _meta = data
 
             if isinstance(chunk, AIMessageChunk) and chunk.usage_metadata:
-                usage = chunk.usage_metadata
+                um = chunk.usage_metadata
+                if um.get("input_tokens") or um.get("output_tokens"):
+                    usage = um
 
             if isinstance(chunk, AIMessageChunk) and chunk.tool_call_chunks:
                 for tc in chunk.tool_call_chunks:
@@ -781,11 +783,12 @@ class Session:
         if usage:
             inp = usage.get("input_tokens", 0)
             out = usage.get("output_tokens", 0)
+            if inp or out:
 
-            def _fmt(n: int) -> str:
-                return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+                def _fmt(n: int) -> str:
+                    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
 
-            self._io.write(f"({_fmt(inp)} in, {_fmt(out)} out)", style="dim")
+                self._io.write(f"({_fmt(inp)} in, {_fmt(out)} out)", style="dim")
         return False, None, text_parts
 
     # ── routing ──────────────────────────────────────────────────────────────
