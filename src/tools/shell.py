@@ -7,14 +7,10 @@ MAX_OUTPUT = 50_000  # chars; truncate beyond this to avoid flooding context
 
 
 def run_shell(command: str, timeout: int = 60) -> str:
-    """Run a shell command and return its combined stdout/stderr output.
+    """Run a shell command (/bin/sh -c) and return stdout+stderr.
 
-    Use this to invoke profiling tools (perf, flamegraph, addr2line, objdump),
-    compilers, test runners, or any system command needed during analysis.
-    Commands are executed via /bin/sh -c in the current working directory.
-
-    command: the shell command to run
-    timeout: maximum seconds to wait before killing the process (default 60)
+    command: shell command to run
+    timeout: max seconds (default 60)
     """
     try:
         result = subprocess.run(
@@ -51,13 +47,13 @@ def run_d8(
     stdout_file: str | None = None,
     stderr_file: str | None = None,
 ) -> str:
-    """Run the d8 JavaScript shell with the given arguments.
+    """Run the d8 JavaScript shell.
 
-    d8_dir: directory containing the d8 binary (e.g. "/path/to/v8/out/release")
-    d8_args: list of arguments to pass to d8 (e.g. ["--prof", "script.js"])
-    timeout: maximum seconds to wait before killing the process (default 60)
-    stdout_file: if set, redirect stdout to this file (path) instead of capturing it
-    stderr_file: if set, redirect stderr to this file (path) instead of capturing it
+    d8_dir: directory containing the d8 binary
+    d8_args: arguments to pass to d8
+    timeout: max seconds (default 60)
+    stdout_file: redirect stdout to this file instead of capturing
+    stderr_file: redirect stderr to this file instead of capturing
     """
     cmd = [str(Path(d8_dir) / "d8"), *d8_args]
     stdout = open(stdout_file, "w") if stdout_file else subprocess.PIPE

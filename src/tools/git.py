@@ -41,13 +41,13 @@ def git_grep(
     line: int | None = None,
     context: int = 80,
 ) -> str:
-    """Search for a pattern across all tracked files in the git repository.
+    """Search tracked files for a pattern (git grep -E).
 
-    pattern: the search pattern (passed to git grep -E)
-    path: optional path to restrict the search (relative to repo root)
-    git_context: lines of context around each match (git grep -C)
-    line: if given, centre the output on this 1-based line number and show `context` lines around it
-    context: lines to show before and after `line` (default 80); when line is not given, limits total output lines
+    pattern: regex search pattern
+    path: restrict to this path (relative to repo root)
+    git_context: lines of context around matches (git grep -C)
+    line: centre output on this line number
+    context: lines around `line`, or max output lines (default 80)
     """
     cmd = ["git", "grep", "-En", "--heading"]
     if git_context:
@@ -69,13 +69,12 @@ def git_show(
     line: int | None = None,
     context: int = 80,
 ) -> str:
-    """Show a git commit or a file's content at a given commit.
+    """Show a commit diff, or a file at a given commit.
 
-    commit_hash: the git commit hash
-    file_path: if given, show the content of this file at the commit (relative to repo root);
-               if omitted, show the full commit diff and metadata
-    line: if given, centre the output on this 1-based line number and show `context` lines around it
-    context: lines to show before and after `line` (default 80); when line is not given, limits total output lines
+    commit_hash: git commit hash
+    file_path: show this file at the commit; if omitted, show full commit
+    line: centre output on this line number
+    context: lines around `line`, or max output lines (default 80)
     """
     cmd = ["git", "show", f"{commit_hash}:{file_path}" if file_path else commit_hash]
     out = _git(cmd)
@@ -92,12 +91,12 @@ def git_blame(
     line: int | None = None,
     context: int = 20,
 ) -> str:
-    """Show git blame for a file in the repository.
+    """Show git blame for a file.
 
-    file_path: path relative to the repo root
-    commit_hash: if given, show blame as of that commit; defaults to HEAD
-    line: if given, centre the output on this 1-based line number and show `context` lines around it
-    context: lines to show before and after `line` (default 20); ignored when line is not given
+    file_path: path relative to repo root
+    commit_hash: blame as of this commit (default HEAD)
+    line: centre output on this line number
+    context: lines around `line` (default 20)
     """
     cmd = ["git", "blame", "--date=short"]
     if commit_hash:
@@ -117,14 +116,12 @@ def git_log(
     grep: str | None = None,
     author: str | None = None,
 ) -> str:
-    """Show the git commit log in the repository.
+    """Show git commit log.
 
-    Use this to find relevant commits by message content, author, or to see recent history.
-
-    limit: maximum number of commits to show (default 10)
-    oneline: if true, show each commit as a single line (hash and subject)
-    grep: if provided, only show commits with messages matching this pattern
-    author: if provided, only show commits by this author
+    limit: max commits (default 10)
+    oneline: one line per commit
+    grep: filter by commit message pattern
+    author: filter by author
     """
     cmd = ["git", "log", f"-n{limit}"]
     if oneline:
@@ -142,13 +139,12 @@ def git_diff(
     staged: bool = False,
     context: int = 80,
 ) -> str:
-    """Show changes in the working tree, staging area, or between commits.
+    """Show working tree, staged, or inter-commit diffs.
 
-    ref: compare against this ref (e.g. 'HEAD~1', 'main', a commit hash).
-         If omitted, shows unstaged changes (or staged if staged=True).
-    file_path: restrict diff to this file (relative to repo root)
-    staged: if True and no ref, show staged changes (git diff --cached)
-    context: maximum output lines (default 80)
+    ref: compare against this ref (e.g. HEAD~1, main); omit for unstaged changes
+    file_path: restrict to this file
+    staged: if True and no ref, show staged changes
+    context: max output lines (default 80)
     """
     cmd = ["git", "diff"]
     if staged and not ref:
@@ -225,11 +221,11 @@ def git_commit_meta(commit_hash: str) -> dict[str, str]:
 
 
 def read_around(file_path: str, line: int, context: int = 20) -> str:
-    """Read lines around a given line number in a file inside the repository.
+    """Read lines around a line number in a repo file.
 
-    file_path: path relative to the repo root
+    file_path: path relative to repo root
     line: 1-based line number to centre on
-    context: number of lines to show before and after
+    context: lines to show before and after
     """
     full_path = os.path.join(REPO_ROOT, file_path)
     try:

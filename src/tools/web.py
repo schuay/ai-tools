@@ -8,13 +8,10 @@ from tavily import TavilyClient
 
 
 def web_search(query: str, max_results: int = 5) -> str:
-    """Search the web for real-time information, latest news, or technical documentation.
+    """Search the web for information not in the local codebase.
 
-    Use this when you need information that isn't in the local codebase, such as
-    external library documentation, blog posts, bug reports, or spec proposals.
-
-    query: the search query string
-    max_results: maximum number of results to return (default 5)
+    query: search query
+    max_results: max results (default 5)
     """
     api_key = os.environ.get("TAVILY_API_KEY")
     if not api_key:
@@ -37,13 +34,9 @@ def web_search(query: str, max_results: int = 5) -> str:
 
 
 def web_fetch(url: str) -> str:
-    """Fetch and extract the main text content from a specific URL.
+    """Fetch and extract main text from a URL. Strips navigation/boilerplate.
 
-    Use this to read the full content of a webpage (blog post, documentation page,
-    bug report) after finding a promising URL via web_search.
-    Strips navigation, ads, and boilerplate automatically.
-
-    url: the full URL of the page to fetch
+    url: full URL to fetch
     """
     try:
         with httpx.Client(follow_redirects=True, timeout=15.0) as client:

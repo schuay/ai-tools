@@ -125,11 +125,9 @@ def read_file(
 ) -> str:
     """Read a file from the filesystem.
 
-    path: file path (absolute or relative to the working directory)
-    line: if given, centre the output on this 1-based line number and show
-          `context` lines before and after it (with line numbers and a >>> marker)
-    context: lines to show around `line` (default 80); when line is not given,
-             the full file is returned
+    path: file path (absolute or relative to cwd)
+    line: centre output on this line number
+    context: lines around `line`, or max output lines (default 80)
     """
     file_path = resolve_path(path)
     if not file_path.exists():
@@ -154,16 +152,14 @@ def grep_files(
     line: int | None = None,
     context: int = 80,
 ) -> str:
-    """Search for a pattern in files on the filesystem using grep.
+    """Search files with grep -E (for untracked files, logs, build outputs).
 
-    Useful for files not tracked by git (build outputs, logs, traces, etc.).
-
-    pattern: the search pattern (extended regex, grep -E)
-    path: file or directory to search (default: current working directory)
-    glob: if given, restrict to files matching this pattern (e.g. "*.py", "*.log")
-    grep_context: lines of context around each match (grep -C)
-    line: if given, centre the output on this 1-based line number and show `context` lines around it
-    context: lines to show before and after `line` (default 80); when line is not given, limits total output lines
+    pattern: regex pattern
+    path: file or directory (default: cwd)
+    glob: file pattern filter (e.g. "*.py")
+    grep_context: lines of context (grep -C)
+    line: centre output on this line number
+    context: lines around `line`, or max output lines (default 80)
     """
     cmd = ["grep", "-rEn", "--color=never"]
     if grep_context:
@@ -181,12 +177,9 @@ def grep_files(
 
 
 def list_dir(path: str = ".") -> str:
-    """List the contents of a directory.
+    """List directory contents (dirs first, with trailing '/').
 
-    Directories are shown with a trailing '/'. Entries are sorted
-    alphabetically, directories first.
-
-    path: directory path relative to the working directory (default: '.')
+    path: directory path (default: '.')
     """
     dir_path = Path(os.getcwd()) / path
     if not dir_path.exists():
@@ -212,22 +205,14 @@ def list_dir(path: str = ".") -> str:
 
 
 def edit_file(path: str, search: str, replace: str) -> str:
-    """Edit a file by finding and replacing a specific block of code.
+    """Find and replace a code block in a file (fuzzy matching).
 
-    Locates *search* in the file using fuzzy matching (handles minor whitespace
-    differences) and writes the result. The user is asked to approve or reject
-    before this tool runs (configured via interrupt_on in the agent).
+    Include 3-5 lines of unchanged context so the location is unambiguous.
+    Reproduce indentation exactly. The block must be unique.
 
-    Guidance for writing a good search block:
-    - Include 3-5 lines of unchanged surrounding context so the location is
-      unambiguous, especially in large files.
-    - Reproduce the indentation exactly as it appears in the file.
-    - The block must be unique — if the same lines appear more than once,
-      add more context to distinguish them.
-
-    path:    absolute path or path relative to the working directory
-    search:  the existing code to find (verbatim, with context lines)
-    replace: the new code that replaces the search block exactly
+    path: file path
+    search: existing code to find (with context lines)
+    replace: replacement code
     """
     file_path = resolve_path(path)
     if not file_path.exists():
@@ -257,14 +242,10 @@ def edit_file(path: str, search: str, replace: str) -> str:
 
 
 def write_file(path: str, content: str) -> str:
-    """Create or overwrite a file with the given content.
+    """Create or overwrite a file. Parent directories are created automatically.
 
-    Parent directories are created automatically if they do not exist.
-    The user is asked to approve or reject before this tool runs
-    (configured via interrupt_on in the agent).
-
-    path:    absolute path or path relative to the working directory
-    content: the full text content to write
+    path: file path
+    content: full text content to write
     """
     file_path = resolve_path(path)
     try:
