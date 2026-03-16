@@ -614,6 +614,11 @@ class Session:
                 self._loop.call_soon_threadsafe(_cancel)
                 producer_thread.join(timeout=5.0)
 
+        def _flush_md() -> None:
+            flush = getattr(self._io, "flush_markdown", None)
+            if flush:
+                flush()
+
         text_parts: list[str] = []
         current_block: str | None = None
         current_ns: tuple = ()
@@ -631,15 +636,18 @@ class Session:
             # Check control events before blocking on the next chunk.
             if self._stop.is_set():
                 buf.flush()
+                _flush_md()
                 _cancel_mcp_producer()
                 raise _Stopped()
             if self._interrupt_event.is_set():
                 self._interrupt_event.clear()
                 buf.flush()
+                _flush_md()
                 _cancel_mcp_producer()
                 raise _Interrupted()
             if self._steer_event.is_set():
                 buf.flush()
+                _flush_md()
                 _cancel_mcp_producer()
                 return True, None, text_parts
 
@@ -653,6 +661,7 @@ class Session:
                 continue
             except KeyboardInterrupt:
                 buf.flush()
+                _flush_md()
                 _cancel_mcp_producer()
                 raise _Interrupted()
 
@@ -671,6 +680,7 @@ class Session:
 
             if mode == "updates" and "__interrupt__" in data:
                 buf.flush()
+                _flush_md()
                 return (
                     False,
                     self._handle_interrupt(data["__interrupt__"][0].value),
@@ -703,6 +713,7 @@ class Session:
             # Args are fully streamed once we see a non-tool-call event.
             if pending_tool_ids:
                 buf.flush()
+                _flush_md()
                 current_block = None
                 for tid in pending_tool_ids:
                     name = tool_call_names.get(tid, "tool")
@@ -750,6 +761,7 @@ class Session:
                         if text := block.get("thinking", ""):
                             if current_block != "thinking":
                                 buf.flush()
+                                _flush_md()
                                 self._io.write("")
                                 current_block = "thinking"
                             buf.push(text, style="dim italic")
@@ -768,6 +780,7 @@ class Session:
                         if text:
                             if current_block != "reasoning":
                                 buf.flush()
+                                _flush_md()
                                 self._io.write("")
                                 current_block = "reasoning"
                             buf.push(text, style="dim italic")
@@ -775,12 +788,14 @@ class Session:
                         if text := block.get("text", ""):
                             if current_block in ("thinking", "reasoning"):
                                 buf.flush()
+                                _flush_md()
                                 self._io.write("")
                             current_block = "text"
                             text_parts.append(text)
                             buf.push(text)
 
         buf.flush()
+        _flush_md()
         if total_input_tokens or total_output_tokens:
 
             def _fmt(n: int) -> str:

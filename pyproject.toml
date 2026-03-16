@@ -43,7 +43,7 @@ memory-mcp = "memory_mcp:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["analyze", "cli", "commitmsg", "graph", "memorize", "memory_mcp", "qq", "repowatcher", "runner", "session"]
+py-modules = ["analyze", "cli", "commitmsg", "graph", "mdrender", "memorize", "memory_mcp", "qq", "repowatcher", "runner", "session"]
 packages = ["tools"]
 
 [dependency-groups]

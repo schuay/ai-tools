@@ -16,6 +16,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 
+from mdrender import MarkdownRenderer
 from session import Session
 
 PASTE_COLLAPSE_THRESHOLD = 3  # lines
@@ -66,9 +67,13 @@ class TerminalIO:
 
     def __init__(self, console: Console) -> None:
         self._console = console
+        self._md = MarkdownRenderer(console.print)
 
     def write(self, text: str, style: str | None = None) -> None:
-        self._console.print(text, style=style, highlight=False, markup=False)
+        self._md.feed(text, style=style)
+
+    def flush_markdown(self) -> None:
+        self._md.flush()
 
     def set_status(self, text: str) -> None:
         pass  # no status bar in terminal mode
