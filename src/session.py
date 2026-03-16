@@ -731,7 +731,14 @@ class Session:
                 pending_tool_ids.clear()
 
             if isinstance(chunk, ToolMessage):
-                output = str(chunk.content)
+                content = chunk.content
+                if isinstance(content, list):
+                    output = "\n".join(
+                        b["text"] if isinstance(b, dict) and "text" in b else str(b)
+                        for b in content
+                    )
+                else:
+                    output = str(content)
                 lines = output.splitlines()
                 if lines:
                     sep = "┄" * min(48, max(len(ln) for ln in lines[:80]))
