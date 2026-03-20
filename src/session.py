@@ -328,11 +328,13 @@ class Session:
 
     @_slash_command("save", "Save session [name]")
     def _cmd_save(self, args: str) -> None:
-        name = (
-            args.strip()
-            or self._session_name
-            or datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Don't reuse auto-save names for manual saves.
+        prev = (
+            self._session_name
+            if not (self._session_name or "").startswith("auto_")
+            else None
         )
+        name = args.strip() or prev or datetime.now().strftime("%Y%m%d_%H%M%S")
         self._save_session(name)
         self._io.write(f"[saved: {name}]", style="bold green")
 
@@ -368,12 +370,15 @@ class Session:
             meta = json.loads(p.read_text())
             n_msgs = len(meta.get("history", []))
             updated = meta.get("updated", "?")
+            tag = " (auto)" if meta.get("auto") else ""
             current = " (current)" if p.stem == self._session_name else ""
             self._io.write(
-                f"  {p.stem}  {n_msgs} msgs  {updated}{current}", style="dim"
+                f"  {p.stem}  {n_msgs} msgs  {updated}{tag}{current}", style="dim"
             )
 
-    def _save_session(self, name: str) -> None:
+    _MAX_AUTO_SESSIONS = 10
+
+    def _save_session(self, name: str, *, auto: bool = False) -> None:
         _SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         json_path = _SESSIONS_DIR / f"{name}.json"
         existing = json.loads(json_path.read_text()) if json_path.exists() else {}
@@ -384,6 +389,7 @@ class Session:
                     "last_agent": self._last_agent,
                     "agent_history_offset": self._agent_history_offset,
                     "cwd": os.getcwd(),
+                    "auto": auto,
                     "created": existing.get("created", datetime.now().isoformat()),
                     "updated": datetime.now().isoformat(),
                 }
@@ -393,6 +399,19 @@ class Session:
         self._sqlite_conn.backup(file_conn)
         file_conn.close()
         self._session_name = name
+        if auto:
+            self._prune_auto_sessions()
+
+    def _prune_auto_sessions(self) -> None:
+        """Keep only the N most recent auto-saved sessions."""
+        auto_jsons = sorted(
+            _SESSIONS_DIR.glob("auto_*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for p in auto_jsons[self._MAX_AUTO_SESSIONS :]:
+            p.unlink(missing_ok=True)
+            p.with_suffix(".db").unlink(missing_ok=True)
 
     def _load_session(self, name: str) -> None:
         meta = json.loads((_SESSIONS_DIR / f"{name}.json").read_text())
@@ -416,11 +435,16 @@ class Session:
     def stop(self) -> None:
         """Signal the worker thread to exit. Called from the UI thread."""
         if self._history:
-            name = self._session_name or datetime.now().strftime("%Y%m%d_%H%M%S")
+            if self._session_name:
+                try:
+                    self._save_session(self._session_name)
+                except Exception:
+                    pass
             try:
-                self._save_session(name)
+                auto_name = "auto_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+                self._save_session(auto_name, auto=True)
             except Exception:
-                pass  # best-effort
+                pass
         try:
             self._sqlite_conn.close()
         except Exception:
