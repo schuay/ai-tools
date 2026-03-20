@@ -146,6 +146,25 @@ class _LineBuffer:
 # ── session ──────────────────────────────────────────────────────────────────
 
 
+class _Command:
+    """A slash command definition."""
+
+    def __init__(self, name: str, help: str, handler):
+        self.name = name
+        self.help = help
+        self.handler = handler
+
+
+def _slash_command(name: str, help: str):
+    """Decorator to register a method as a slash command."""
+
+    def decorator(fn):
+        fn._slash_command = (name, help)
+        return fn
+
+    return decorator
+
+
 class Session:
     """
     Manages a multi-agent conversation: routing, history, streaming, interrupts.
@@ -259,6 +278,55 @@ class Session:
         self._stop = Event()
         self._interrupt_event = Event()
 
+        self._commands = self._collect_commands()
+
+    # ── slash commands ────────────────────────────────────────────────────────
+
+    def _collect_commands(self) -> dict[str, _Command]:
+        """Auto-discover methods decorated with @_slash_command."""
+        cmds: dict[str, _Command] = {}
+        for attr in dir(self):
+            method = getattr(self, attr, None)
+            if callable(method) and hasattr(method, "_slash_command"):
+                name, help_text = method._slash_command
+                cmds[name] = _Command(name, help_text, method)
+        return cmds
+
+    def _dispatch_command(self, text: str) -> bool:
+        """Try to run text as a slash command. Returns True if handled."""
+        parts = text.strip().split(None, 1)
+        name = parts[0][1:]  # strip leading /
+        args = parts[1] if len(parts) > 1 else ""
+        cmd = self._commands.get(name)
+        if not cmd:
+            self._io.write(f"unknown command: /{name}", style="bold red")
+            self._cmd_help("")
+            return True
+        cmd.handler(args)
+        return True
+
+    @_slash_command("clear", "Clear conversation history")
+    def _cmd_clear(self, args: str) -> None:
+        self._history.clear()
+        self._last_agent = None
+        self._agent_history_offset.clear()
+        self._checkpointers = {name: MemorySaver() for name in self._available_agents}
+        self._agents = {
+            name: self._build_agent(
+                name,
+                cfg,
+                all_agents=self._available_agents,
+                checkpointer=self._checkpointers[name],
+            )
+            for name, cfg in self._available_agents.items()
+        }
+        self._io.write("[cleared]", style="bold yellow")
+
+    @_slash_command("help", "List available commands")
+    def _cmd_help(self, args: str) -> None:
+        for cmd in sorted(self._commands.values(), key=lambda c: c.name):
+            self._io.write(f"  /{cmd.name} — {cmd.help}", style="dim")
+
     # ── public API ───────────────────────────────────────────────────────────
 
     def stop(self) -> None:
@@ -307,6 +375,11 @@ class Session:
         force_agent: str | None = None
         try:
             while True:
+                if user_msg.startswith("/"):
+                    self._dispatch_command(user_msg)
+                    user_msg = self._wait_input("> ")
+                    force_agent = None
+                    continue
                 self._interrupt_event.clear()  # discard stale Esc presses from idle period
                 try:
                     steered, response = self._run_turn(user_msg, force_agent)
