@@ -16,12 +16,13 @@ import contextlib
 import json
 import os
 import queue
+import sqlite3
 import time
 import traceback
 from datetime import datetime
 from pathlib import Path
 
-from platformdirs import user_log_path
+from platformdirs import user_data_path, user_log_path
 from threading import Event, Thread
 from typing import Protocol
 
@@ -58,7 +59,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
 from graph import make_agent
@@ -84,6 +85,7 @@ class SessionIO(Protocol):
 
 
 _LOG_DIR = user_log_path("ai-tools")
+_SESSIONS_DIR = user_data_path("ai-tools") / "sessions"
 
 
 class _LoggingIO:
@@ -262,6 +264,7 @@ class Session:
         self._history: list[dict] = []
         self._last_agent: str | None = None
         self._agent_history_offset: dict[str, int] = {}
+        self._session_name: str | None = None
 
         # Persistent event loop for MCP async turns — reused across turns so that
         # async HTTP clients (httpx, aiohttp) can keep their connection pools alive.
@@ -310,14 +313,10 @@ class Session:
         self._history.clear()
         self._last_agent = None
         self._agent_history_offset.clear()
-        self._checkpointers = {name: MemorySaver() for name in self._available_agents}
+        for agent_name in self._available_agents:
+            self._checkpointer.delete_thread(agent_name)
         self._agents = {
-            name: self._build_agent(
-                name,
-                cfg,
-                all_agents=self._available_agents,
-                checkpointer=self._checkpointers[name],
-            )
+            name: self._build_agent(name, cfg, all_agents=self._available_agents)
             for name, cfg in self._available_agents.items()
         }
         self._io.write("[cleared]", style="bold yellow")
@@ -327,10 +326,105 @@ class Session:
         for cmd in sorted(self._commands.values(), key=lambda c: c.name):
             self._io.write(f"  /{cmd.name} — {cmd.help}", style="dim")
 
+    @_slash_command("save", "Save session [name]")
+    def _cmd_save(self, args: str) -> None:
+        name = (
+            args.strip()
+            or self._session_name
+            or datetime.now().strftime("%Y%m%d_%H%M%S")
+        )
+        self._save_session(name)
+        self._io.write(f"[saved: {name}]", style="bold green")
+
+    @_slash_command("load", "Load a saved session")
+    def _cmd_load(self, args: str) -> None:
+        name = args.strip()
+        if not name:
+            self._io.write("usage: /load <name>", style="bold red")
+            return
+        json_path = _SESSIONS_DIR / f"{name}.json"
+        if not json_path.exists():
+            self._io.write(f"session not found: {name}", style="bold red")
+            return
+        self._load_session(name)
+        self._io.write(
+            f"[loaded: {name}] ({len(self._history)} messages)", style="bold green"
+        )
+
+    @_slash_command("sessions", "List saved sessions")
+    def _cmd_sessions(self, args: str) -> None:
+        if not _SESSIONS_DIR.exists():
+            self._io.write("no saved sessions", style="dim")
+            return
+        jsons = sorted(
+            _SESSIONS_DIR.glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not jsons:
+            self._io.write("no saved sessions", style="dim")
+            return
+        for p in jsons:
+            meta = json.loads(p.read_text())
+            n_msgs = len(meta.get("history", []))
+            updated = meta.get("updated", "?")
+            current = " (current)" if p.stem == self._session_name else ""
+            self._io.write(
+                f"  {p.stem}  {n_msgs} msgs  {updated}{current}", style="dim"
+            )
+
+    def _save_session(self, name: str) -> None:
+        _SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        json_path = _SESSIONS_DIR / f"{name}.json"
+        existing = json.loads(json_path.read_text()) if json_path.exists() else {}
+        json_path.write_text(
+            json.dumps(
+                {
+                    "history": self._history,
+                    "last_agent": self._last_agent,
+                    "agent_history_offset": self._agent_history_offset,
+                    "cwd": os.getcwd(),
+                    "created": existing.get("created", datetime.now().isoformat()),
+                    "updated": datetime.now().isoformat(),
+                }
+            )
+        )
+        file_conn = sqlite3.connect(str(_SESSIONS_DIR / f"{name}.db"))
+        self._sqlite_conn.backup(file_conn)
+        file_conn.close()
+        self._session_name = name
+
+    def _load_session(self, name: str) -> None:
+        meta = json.loads((_SESSIONS_DIR / f"{name}.json").read_text())
+        self._history = meta["history"]
+        self._last_agent = meta.get("last_agent")
+        self._agent_history_offset = meta.get("agent_history_offset", {})
+        self._sqlite_conn.close()
+        self._sqlite_conn = sqlite3.connect(":memory:", check_same_thread=False)
+        file_conn = sqlite3.connect(str(_SESSIONS_DIR / f"{name}.db"))
+        file_conn.backup(self._sqlite_conn)
+        file_conn.close()
+        self._checkpointer = SqliteSaver(self._sqlite_conn)
+        self._agents = {
+            name: self._build_agent(name, cfg, all_agents=self._available_agents)
+            for name, cfg in self._available_agents.items()
+        }
+        self._session_name = name
+
     # ── public API ───────────────────────────────────────────────────────────
 
     def stop(self) -> None:
         """Signal the worker thread to exit. Called from the UI thread."""
+        if self._history:
+            name = self._session_name or datetime.now().strftime("%Y%m%d_%H%M%S")
+            try:
+                self._save_session(name)
+            except Exception:
+                pass  # best-effort
+        try:
+            self._sqlite_conn.close()
+        except Exception:
+            pass
         self._stop.set()
         self._input_event.set()  # unblocks _wait_input
         self._steer_event.set()  # unblocks _stream on next chunk check
@@ -425,12 +519,11 @@ class Session:
         cfg: dict,
         all_agents: dict,
         extra_tools: list | None = None,
-        checkpointer=None,
     ) -> object:
         kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
         return make_agent(
             model=init_chat_model(cfg["model_id"], **kwargs),
-            checkpointer=checkpointer,
+            checkpointer=self._checkpointer,
             name=name,
             agents=all_agents,
             interrupt_on=self.INTERRUPT_ON,
@@ -482,24 +575,16 @@ class Session:
             for name, cfg in self.AGENTS.items()
             if not (key := _provider_key_var(cfg["model_id"])) or os.environ.get(key)
         }
-        # Store available configs and checkpointers separately from the compiled agents.
-        # Checkpointers must survive agent rebuilds: per-turn MCP sessions require us to
-        # recompile the agent each turn (to inject session-bound tools), but the
-        # MemorySaver instance must be shared so LangGraph thread history is preserved.
-        # All deepagents middleware (TodoList, Summarization, etc.) stores its state
-        # through LangGraph's checkpoint, not in middleware instance vars, so rebuilding
-        # the compiled agent is safe.
-        #
-        # Optimisation opportunity: only rebuild when MCP tools are configured; for
-        # non-MCP turns the pre-built agent from this dict could be used directly.
         self._available_agents = available
-        self._checkpointers = {name: MemorySaver() for name in available}
+        # Single shared SqliteSaver (in-memory). On save/exit, backed up to file
+        # via sqlite3.Connection.backup(). Agent namespacing via thread_id=agent_name.
+        self._sqlite_conn = sqlite3.connect(":memory:", check_same_thread=False)
+        self._checkpointer = SqliteSaver(self._sqlite_conn)
+        self._checkpointer.setup()
         self._mcp_client: object = None
         self._mcp_server_names: list[str] = []
         return {
-            name: self._build_agent(
-                name, cfg, all_agents=available, checkpointer=self._checkpointers[name]
-            )
+            name: self._build_agent(name, cfg, all_agents=available)
             for name, cfg in available.items()
         }
 
@@ -535,7 +620,7 @@ class Session:
                 #       agent = create_agent(..., tools)
                 #
                 # The agent is rebuilt each turn so it carries the session-bound tools.
-                # The checkpointer is shared (self._checkpointers[agent_name]) so the
+                # The checkpointer is shared (self._checkpointer) so the
                 # LangGraph thread history (messages, tool calls) survives across turns.
                 #
                 # For stdio servers: the subprocess lives for the whole turn (one
@@ -548,7 +633,6 @@ class Session:
                 # For now we always rebuild; a future version could check the user
                 # message for signals before opening sessions.
                 cfg = self._available_agents[agent_name]
-                checkpointer = self._checkpointers[agent_name]
                 available = self._available_agents
 
                 async def _mcp_runner(chunk_q, _cur=current_input) -> None:
@@ -573,7 +657,6 @@ class Session:
                             cfg,
                             all_agents=available,
                             extra_tools=mcp_tools,
-                            checkpointer=checkpointer,
                         )
                         async for item in turn_agent.astream(
                             _cur,
