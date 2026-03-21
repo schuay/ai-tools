@@ -18,6 +18,7 @@ import os
 import queue
 import sqlite3
 import time
+import uuid
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -59,7 +60,9 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+import aiosqlite
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
 from graph import make_agent
@@ -419,7 +422,10 @@ class Session:
         self._last_agent = meta.get("last_agent")
         self._agent_history_offset = meta.get("agent_history_offset", {})
         self._sqlite_conn.close()
-        self._sqlite_conn = sqlite3.connect(":memory:", check_same_thread=False)
+        self._sqlite_uri = f"file:ckpt_{uuid.uuid4().hex}?mode=memory&cache=shared"
+        self._sqlite_conn = sqlite3.connect(
+            self._sqlite_uri, uri=True, check_same_thread=False
+        )
         file_conn = sqlite3.connect(str(_SESSIONS_DIR / f"{name}.db"))
         file_conn.backup(self._sqlite_conn)
         file_conn.close()
@@ -543,11 +549,12 @@ class Session:
         cfg: dict,
         all_agents: dict,
         extra_tools: list | None = None,
+        checkpointer=None,
     ) -> object:
         kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
         return make_agent(
             model=init_chat_model(cfg["model_id"], **kwargs),
-            checkpointer=self._checkpointer,
+            checkpointer=checkpointer or self._checkpointer,
             name=name,
             agents=all_agents,
             interrupt_on=self.INTERRUPT_ON,
@@ -600,9 +607,12 @@ class Session:
             if not (key := _provider_key_var(cfg["model_id"])) or os.environ.get(key)
         }
         self._available_agents = available
-        # Single shared SqliteSaver (in-memory). On save/exit, backed up to file
-        # via sqlite3.Connection.backup(). Agent namespacing via thread_id=agent_name.
-        self._sqlite_conn = sqlite3.connect(":memory:", check_same_thread=False)
+        # Shared in-memory SQLite via URI mode so both sync (SqliteSaver) and
+        # async (AsyncSqliteSaver for MCP astream) can access the same data.
+        self._sqlite_uri = f"file:ckpt_{uuid.uuid4().hex}?mode=memory&cache=shared"
+        self._sqlite_conn = sqlite3.connect(
+            self._sqlite_uri, uri=True, check_same_thread=False
+        )
         self._checkpointer = SqliteSaver(self._sqlite_conn)
         self._checkpointer.setup()
         self._mcp_client: object = None
@@ -676,19 +686,24 @@ class Session:
                                     sess, server_name=name, tool_name_prefix=True
                                 )
                             )
-                        turn_agent = self._build_agent(
-                            agent_name,
-                            cfg,
-                            all_agents=available,
-                            extra_tools=mcp_tools,
-                        )
-                        async for item in turn_agent.astream(
-                            _cur,
-                            config=config,
-                            stream_mode=["messages", "updates"],
-                            subgraphs=True,
-                        ):
-                            chunk_q.put(("chunk", item))
+                        async with aiosqlite.connect(
+                            self._sqlite_uri, uri=True
+                        ) as aconn:
+                            acheckpointer = AsyncSqliteSaver(aconn)
+                            turn_agent = self._build_agent(
+                                agent_name,
+                                cfg,
+                                all_agents=available,
+                                extra_tools=mcp_tools,
+                                checkpointer=acheckpointer,
+                            )
+                            async for item in turn_agent.astream(
+                                _cur,
+                                config=config,
+                                stream_mode=["messages", "updates"],
+                                subgraphs=True,
+                            ):
+                                chunk_q.put(("chunk", item))
 
                 steered, resume, parts = self._stream(
                     None, config, current_input, async_agent_runner=_mcp_runner
