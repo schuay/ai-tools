@@ -555,6 +555,7 @@ class Session:
         all_agents: dict,
         extra_tools: list | None = None,
         checkpointer=None,
+        extra_system_prompt: str | None = None,
     ) -> object:
         kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
         return make_agent(
@@ -564,6 +565,7 @@ class Session:
             agents=all_agents,
             interrupt_on=self.INTERRUPT_ON,
             extra_tools=extra_tools,
+            extra_system_prompt=extra_system_prompt,
         )
 
     def _init_mcp(self) -> tuple:
@@ -678,18 +680,31 @@ class Session:
                     from langchain_mcp_adapters.tools import load_mcp_tools
 
                     async with contextlib.AsyncExitStack() as stack:
-                        sessions = {
-                            name: await stack.enter_async_context(
-                                self._mcp_client.session(name)
+                        sessions = {}
+                        server_instructions: list[str] = []
+                        for srv in self._mcp_server_names:
+                            sess = await stack.enter_async_context(
+                                self._mcp_client.session(srv, auto_initialize=False)
                             )
-                            for name in self._mcp_server_names
-                        }
+                            init_result = await sess.initialize()
+                            if init_result.instructions:
+                                server_instructions.append(
+                                    f"### {srv}\n{init_result.instructions}"
+                                )
+                            sessions[srv] = sess
                         mcp_tools: list = []
-                        for name, sess in sessions.items():
+                        for srv, sess in sessions.items():
                             mcp_tools.extend(
                                 await load_mcp_tools(
-                                    sess, server_name=name, tool_name_prefix=True
+                                    sess, server_name=srv, tool_name_prefix=True
                                 )
+                            )
+                        extra_sp = None
+                        if server_instructions:
+                            extra_sp = (
+                                "\n\n## MCP Server Instructions\n\n"
+                                + "\n\n".join(server_instructions)
+                                + "\n"
                             )
                         async with aiosqlite.connect(
                             self._sqlite_uri, uri=True
@@ -701,6 +716,7 @@ class Session:
                                 all_agents=available,
                                 extra_tools=mcp_tools,
                                 checkpointer=acheckpointer,
+                                extra_system_prompt=extra_sp,
                             )
                             async for item in turn_agent.astream(
                                 _cur,
