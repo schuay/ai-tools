@@ -273,7 +273,12 @@ class Session:
         # async HTTP clients (httpx, aiohttp) can keep their connection pools alive.
         # asyncio.run() closes the loop after each call, which breaks clients on the
         # second turn with "RuntimeError: Event loop is closed".
+        # The loop runs forever in a dedicated daemon thread; coroutines are submitted
+        # via run_coroutine_threadsafe() to avoid "event loop is already running" when
+        # a previous turn was interrupted before its run_until_complete() returned.
         self._loop = asyncio.new_event_loop()
+        self._loop_thread = Thread(target=self._loop.run_forever, daemon=True)
+        self._loop_thread.start()
 
         # Thread synchronisation between the worker (session) and main (UI) threads.
         self._input_event = Event()
@@ -774,7 +779,10 @@ class Session:
             # across turns without hitting "Event loop is closed".
             def _producer() -> None:
                 try:
-                    self._loop.run_until_complete(async_agent_runner(chunk_q))
+                    future = asyncio.run_coroutine_threadsafe(
+                        async_agent_runner(chunk_q), self._loop
+                    )
+                    future.result()  # blocks until done or cancelled
                 except Exception as exc:
                     chunk_q.put(("error", exc))
                 finally:
