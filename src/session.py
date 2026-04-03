@@ -1122,10 +1122,18 @@ class Session:
             else:
                 self._io.write(line, style="dim")
 
+    # Short aliases for HITL decisions.  Maps single-char shortcuts and common
+    # abbreviations to the canonical decision names used by the middleware.
+    _HITL_ALIASES: dict[str, str] = {
+        "y": "approve",
+        "n": "reject",
+        "e": "edit",
+        "": "approve",  # Enter = approve
+    }
+
     def _handle_hitl_action(self, action_req: dict, review_cfg: dict) -> dict:
         name, args = action_req["name"], action_req["args"]
         allowed = review_cfg["allowed_decisions"]
-        opts = "/".join(allowed)
 
         self._io.write(f"[approve?] tool={name}", style="bold yellow")
         if name == "edit_file":
@@ -1135,11 +1143,18 @@ class Session:
         else:
             self._io.write(json.dumps(args, indent=2), style="dim")
 
+        shortcuts = " / ".join(
+            f"{'Enter' if k == '' else k}={v}"
+            for k, v in self._HITL_ALIASES.items()
+            if v in allowed
+        )
+
         while True:
-            choice = self._wait_input(f"[{opts}]> ").lower()
+            raw = self._wait_input(f"[{shortcuts}]> ").strip().lower()
+            choice = self._HITL_ALIASES.get(raw, raw)
             if choice in allowed:
                 break
-            self._io.write(f"  choose one of: {opts}")
+            self._io.write(f"  choose one of: {shortcuts}")
 
         match choice:
             case "approve":
