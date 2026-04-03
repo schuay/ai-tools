@@ -766,6 +766,9 @@ class Session:
             self._io.set_status("routing…")
             name = self._route(user_msg)
         self._last_agent = name  # always track, including force_agent path
+        on_turn_start = getattr(self._io, "on_turn_start", None)
+        if on_turn_start:
+            on_turn_start()
         self._io.write(f"[{name}]", style="bold blue")
         self._io.set_status("Agent is running…")
         return (
@@ -971,17 +974,22 @@ class Session:
                     )
                 else:
                     output = str(content)
-                lines = output.splitlines()
-                if lines:
-                    sep = "┄" * min(48, max(len(ln) for ln in lines[:80]))
-                    self._io.write(f"  {sep}", style="dim")
-                    for line in lines[:80]:
-                        self._io.write(f"  {line}", style="dim")
-                    if len(lines) > 80:
-                        self._io.write(
-                            f"  … ({len(lines) - 80} more lines)", style="dim"
-                        )
-                    self._io.write(f"  {sep}", style="dim")
+                write_tool_result = getattr(self._io, "write_tool_result", None)
+                if write_tool_result:
+                    write_tool_result(output)
+                else:
+                    # Fallback for IO implementations without tool result support.
+                    lines = output.splitlines()
+                    if lines:
+                        sep = "┄" * min(48, max(len(ln) for ln in lines[:80]))
+                        self._io.write(f"  {sep}", style="dim")
+                        for line in lines[:80]:
+                            self._io.write(f"  {line}", style="dim")
+                        if len(lines) > 80:
+                            self._io.write(
+                                f"  … ({len(lines) - 80} more lines)", style="dim"
+                            )
+                        self._io.write(f"  {sep}", style="dim")
                 continue
 
             if not isinstance(chunk, AIMessageChunk) or not chunk.content:
