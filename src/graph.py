@@ -235,6 +235,7 @@ def make_agent(
     extra_tools: list | None = None,
     system_prompt: str | None = None,
     extra_system_prompt: str | None = None,
+    extra_middleware: list | None = None,
 ):
     model = model or _default_model
     if TRACE:
@@ -293,6 +294,7 @@ def make_agent(
 
     middleware = _middleware(
         [SubAgentMiddleware(backend=backend, subagents=[gp_subagent])]
+        + (extra_middleware or [])
     )
 
     system_prompt = system_prompt or (

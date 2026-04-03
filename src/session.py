@@ -65,6 +65,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
+import graph
 from graph import make_agent
 from tools.fs import preview_diff, preview_write
 
@@ -556,6 +557,7 @@ class Session:
         extra_tools: list | None = None,
         checkpointer=None,
         extra_system_prompt: str | None = None,
+        extra_middleware: list | None = None,
     ) -> object:
         kwargs = {k: v for k, v in cfg.items() if k not in self._METADATA_KEYS}
         return make_agent(
@@ -566,6 +568,7 @@ class Session:
             interrupt_on=self.INTERRUPT_ON,
             extra_tools=extra_tools,
             extra_system_prompt=extra_system_prompt,
+            extra_middleware=extra_middleware,
         )
 
     def _init_mcp(self) -> tuple:
@@ -679,6 +682,8 @@ class Session:
                 async def _mcp_runner(chunk_q, _cur=current_input) -> None:
                     from langchain_mcp_adapters.tools import load_mcp_tools
 
+                    from tools.lazy_mcp import make_lazy_mcp
+
                     async with contextlib.AsyncExitStack() as stack:
                         sessions = {}
                         server_instructions: list[str] = []
@@ -706,6 +711,13 @@ class Session:
                                 + "\n\n".join(server_instructions)
                                 + "\n"
                             )
+                        # Lazy loading: all MCP tools go into ToolNode for
+                        # execution, but only search_mcp_tools is visible to
+                        # the LLM initially.  The middleware progressively
+                        # adds schemas as the LLM searches for tools.
+                        search_tool, lazy_mw = make_lazy_mcp(
+                            mcp_tools, verbose=graph.TRACE
+                        )
                         async with aiosqlite.connect(
                             self._sqlite_uri, uri=True
                         ) as aconn:
@@ -714,9 +726,10 @@ class Session:
                                 agent_name,
                                 cfg,
                                 all_agents=available,
-                                extra_tools=mcp_tools,
+                                extra_tools=[search_tool] + mcp_tools,
                                 checkpointer=acheckpointer,
                                 extra_system_prompt=extra_sp,
+                                extra_middleware=[lazy_mw],
                             )
                             async for item in turn_agent.astream(
                                 _cur,
