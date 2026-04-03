@@ -4,7 +4,11 @@ import copy
 
 from langchain.agents import create_agent
 from langchain_core.tools import StructuredTool
-from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
+from langchain.agents.middleware import (
+    HumanInTheLoopMiddleware,
+    ModelRetryMiddleware,
+    TodoListMiddleware,
+)
 from langchain.chat_models import init_chat_model
 from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from langgraph.types import interrupt
@@ -18,7 +22,7 @@ from deepagents.middleware.summarization import (
     compute_summarization_defaults,
 )
 
-from tools import REPO_ROOT, standard_tools
+from tools import REPO_ROOT, _is_rate_limit, standard_tools
 
 # ── tracing ──────────────────────────────────────────────────────────────────
 #
@@ -273,7 +277,17 @@ def make_agent(
         )
 
     def _middleware(extra: list | None = None) -> list:
-        mw = [TodoListMiddleware()]
+        mw = [
+            TodoListMiddleware(),
+            ModelRetryMiddleware(
+                retry_on=_is_rate_limit,
+                on_failure="error",
+                max_retries=5,
+                initial_delay=15.0,
+                backoff_factor=2.0,
+                max_delay=120.0,
+            ),
+        ]
         if extra:
             mw.extend(extra)
         mw += [
