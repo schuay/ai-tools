@@ -11,15 +11,20 @@ import threading
 from threading import Thread
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.styles import Style
 from rich.console import Console
 
 from mdrender import MarkdownRenderer
 from session import Session
 
 PASTE_COLLAPSE_THRESHOLD = 3  # lines
+
+# Disable the default bottom-toolbar reverse-video so our inline colors work.
+_TOOLBAR_STYLE = Style.from_dict({"bottom-toolbar": "noreverse"})
 
 
 def _make_key_bindings(session: Session) -> KeyBindings:
@@ -63,11 +68,12 @@ def _make_key_bindings(session: Session) -> KeyBindings:
 
 
 class TerminalIO:
-    """SessionIO implementation: rich Console for output."""
+    """SessionIO implementation: rich Console for output, status via toolbar."""
 
     def __init__(self, console: Console) -> None:
         self._console = console
         self._md = MarkdownRenderer(console.print)
+        self._status = ""
 
     def write(self, text: str, style: str | None = None) -> None:
         self._md.feed(text, style=style)
@@ -76,7 +82,40 @@ class TerminalIO:
         self._md.flush()
 
     def set_status(self, text: str) -> None:
-        pass  # no status bar in terminal mode
+        self._status = text
+
+    @property
+    def status(self) -> str:
+        return self._status
+
+
+def _make_toolbar(io: TerminalIO, session: Session):
+    """Return a callable for prompt_toolkit's bottom_toolbar."""
+
+    def _toolbar():
+        status = io.status
+        if not status:
+            return HTML(
+                '<style bg="#1a1a2e" fg="#555555">'
+                " <b>Esc</b> interrupt  <b>Alt+Enter</b> newline"
+                "</style>"
+            )
+
+        # Approval prompt — highlight the shortcuts
+        if "approve" in status.lower() or "reject" in status.lower():
+            return HTML(
+                '<style bg="#1a1a2e">'
+                " <style fg='#c3e88d'><b>Y</b>/Enter accept</style>"
+                "  <b>N</b> reject"
+                "  <b>E</b> edit"
+                "</style>"
+            )
+
+        # Active status (routing, running, waiting)
+        escaped = status.replace("&", "&amp;").replace("<", "&lt;")
+        return HTML(f'<style bg="#1a1a2e" fg="#888888"> <i>{escaped}</i></style>')
+
+    return _toolbar
 
 
 def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
@@ -111,6 +150,8 @@ def main() -> None:
             multiline=True,
             history=InMemoryHistory(),
             prompt_continuation="  ",
+            bottom_toolbar=_make_toolbar(io, session),
+            style=_TOOLBAR_STYLE,
         )
 
         while worker.is_alive():
