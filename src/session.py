@@ -245,7 +245,7 @@ class Session:
             "description": "Claude Sonnet",
         },
         "opus": {
-            "model_id": "anthropic:claude-opus-4-6",
+            "model_id": "anthropic:claude-opus-4-7",
             "description": "Claude Opus",
         },
     }

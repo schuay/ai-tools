@@ -1,74 +1,115 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code working in this repo.
 
 ## Commands
 
 ```sh
-# Install locally (all CLI commands into PATH via ~/.local/bin/)
+# Install all CLI commands into ~/.local/bin/
 uv tool install .
 
-# Upgrade after pulling changes
+# After pulling changes
 uv tool upgrade ai-tools
 
-# Run tests
-pytest src/tests/
-
-# Run a single test file
-pytest src/tests/test_tools.py
-
-# Run a single test
-pytest src/tests/test_tools.py::test_name
-
-# Lint / format
-ruff check src/
-ruff format src/
+# Tests / lint
+uv run pytest src/tests/
+uv run pytest src/tests/test_tools.py::TestFind::test_exact_match
+uv run ruff check src/
+uv run ruff format src/
 ```
 
-## Architecture
+Always use `uv` to run Python (per user preference).
 
-Three files, three responsibilities, almost no coupling between them (see `CONTEXT.md` for details):
+## CLI entry points (from `pyproject.toml`)
 
-- **`src/graph.py`** — LangGraph agent factory. `make_agent(model, checkpointer, ...)` configures tools, system prompt, and middleware. Also exports bare `agent` for LangGraph Studio. Handles Gemini schema fixups (missing `items` in array schemas).
+| Command       | Module             | Purpose                                              |
+| ------------- | ------------------ | ---------------------------------------------------- |
+| `agent`       | `cli.py`           | Multi-agent interactive REPL (the main tool)         |
+| `qq`          | `qq.py`            | One-shot quick query; piped stdin handled inline     |
+| `analyze`     | `analyze.py`       | Headless deep-agent perf-trace analysis              |
+| `commitmsg`   | `commitmsg.py`     | Generate a commit message for staged/all changes     |
+| `repowatcher` | `repowatcher.py`   | Filter+analyse new commits on a branch (daemon mode) |
+| `memorize`    | `memorize.py`      | Curate analyses into a Chroma vector DB              |
+| `memory-mcp`  | `memory_mcp.py`    | Expose the memory DB to MCP clients                  |
 
-- **`src/session.py`** — All logic. Manages agent routing, LangGraph streaming, interrupt handling, and manual conversation history. The `SessionIO` protocol (`write`, `set_status`) is its only interface to the UI. Zero Textual imports.
+## Architecture (the `agent` REPL)
 
-- **`src/cli.py`** — Pure Textual TUI. Implements `SessionIO`. Runs the session on a Textual worker thread; all UI interactions marshal back to the main thread via `call_from_thread`.
+Three top-level files, near-zero coupling:
 
-### Threading model
+- **`src/graph.py`** — agent factory. `make_agent(model, checkpointer, name, agents, interrupt_on, extra_tools, system_prompt, extra_system_prompt, extra_middleware)` returns a `create_agent(...)` graph wired up with the standard tool set, `SubAgentMiddleware` (general-purpose subagent only), `SummarizationMiddleware`, `AnthropicPromptCachingMiddleware`, `PatchToolCallsMiddleware`, `ModelRetryMiddleware` (rate-limit backoff), `TodoListMiddleware`, optional `HumanInTheLoopMiddleware`. Schema fixups (strip `additionalProperties`/`$schema`/`title`/`description`, ensure `items` on arrays) keep Gemini happy. `--trace` enables stderr dumps of system prompt + each model call. Bare `agent = make_agent()` is exported for `langgraph dev`.
 
-Session runs on a single worker thread. Three `threading.Event` pairs coordinate with the main thread:
-- `_input_event`/`_input_value` — worker blocks waiting for user input
-- `_steer_event`/`_steer_value` — mid-stream interruption by user
-- `_stop` — shutdown; sets both others to unblock the worker immediately
+- **`src/session.py`** — all session logic. `Session` owns the agent registry (`AGENTS` class dict), routing, manual cross-turn history, LangGraph streaming, slash commands (`/help`, `/clear`, `/save`, `/load`, `/sessions`), HITL approval flow, MCP per-turn session setup, and persistence. `_LoggingIO` mirrors writes to `~/.local/state/ai-tools/log/<ts>.log`. Sessions auto-save to `~/.local/share/ai-tools/sessions/auto_<ts>.{json,db}` on shutdown (10 most recent kept).
+
+- **`src/cli.py`** — terminal UI built on `prompt_toolkit` + Rich. `TerminalIO` implements `SessionIO`, with a `_TeeFile` that captures Rich output so tool results can be re-rendered when the user toggles collapse. Bottom toolbar shows live status. Keys: Enter submits, Alt+Enter / Ctrl-J newline, Esc interrupts current turn, Ctrl-O toggles tool-output collapse, Up/Down history navigation.
+
+(`CONTEXT.md` is older and refers to a pre-prompt-toolkit Textual UI — treat CLAUDE.md as authoritative.)
+
+### Threading and event coordination
+
+The session runs on a worker thread spawned by `cli.main()`. Four `threading.Event`s coordinate with the prompt-toolkit thread:
+
+- `_input_event` / `_input_value` — worker blocks here when it needs user text.
+- `_steer_event` / `_steer_value` — set by `submit()` mid-turn to redirect the agent.
+- `_interrupt_event` — set by Esc; raises `_Interrupted` between chunks.
+- `_stop` — shutdown signal; sets the others to unblock the worker.
+
+Plus a persistent `asyncio` event loop in a daemon thread (`Session._loop`), used only on the MCP path so async HTTP clients keep their connection pools alive across turns.
+
+### Streaming pipeline (`_stream`)
+
+Producer thread iterates `agent.stream(...)` (or, for MCP, `astream` on the persistent loop) and pushes chunks through a `queue.Queue`. The consumer polls every 50 ms so `_stop`/`_steer`/`_interrupt` events surface promptly. Token usage is summed from `AIMessageChunk.usage_metadata` and reported at end of turn.
 
 ### Agents
 
-11 pre-configured agents in `session.py:AGENTS` (OpenAI GPT-5, Gemini Flash/Pro, Claude Haiku/Sonnet/Opus, DeepSeek). Each gets its own `MemorySaver`. Adding an agent is one dict entry with `model_id`, `description`, and any kwargs forwarded to `init_chat_model`.
+11 entries in `Session.AGENTS`. Names are routing keys; each provides `model_id` + `description` + extra kwargs forwarded verbatim to `init_chat_model`. Current roster:
 
-Routing per turn: exact substring match (longest first), then a cheap Gemini Flash LLM call against descriptions. A fresh `thread_id` (uuid4) gives LangGraph a clean checkpoint namespace each turn.
+- OpenAI: `gpt` (5.2), `turbo` (5.2-pro), `mini` (5-mini), `nano` (5-nano)
+- Google: `lite` / `flash` (gemini-3-flash, minimal/medium thinking), `gemini` (3.1-pro)
+- Anthropic: `haiku`, `sonnet`, `opus`
+- DeepSeek: `seek` (chat). `deepseek-reasoner` is excluded — no tool-calling.
 
-Cross-turn history is a flat `[{"role", "content"}]` list prepended to each LangGraph input — this is how context is shared across agents and turns, since each agent's `MemorySaver` only tracks intra-turn state.
+Default agent is `flash`; routing model is `lite`. An entry is omitted at startup if its provider env var is unset (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `DEEPSEEK_API_KEY`).
+
+### Routing
+
+Per turn: 1) substring match on `<name>:` prefix (longest first to avoid `deepseek` matching `deepseek-v3`); 2) ask the lite router whether a name was mentioned, expecting one of the names or `?`; 3) fall back to `_last_agent` or `DEFAULT_AGENT`. Routing is name-based only — never by topic.
+
+### Cross-turn history
+
+A flat `list[{"role", "content"}]` is maintained on the session. Each agent has a per-agent offset (`_agent_history_offset`) so it only sees the slice it hasn't seen yet — its own prior turns are already in its LangGraph thread (one stable `thread_id` per agent name). Assistant content is tagged `[agent-name]: ...` so cross-agent context preserves attribution.
+
+### Persistence
+
+A shared **in-memory SQLite via URI mode** backs `SqliteSaver` (sync) and `AsyncSqliteSaver` (used on the MCP path). `/save` snapshots both the JSON metadata and the SQLite DB to `~/.local/share/ai-tools/sessions/<name>.{json,db}`. `/load` restores both.
+
+### MCP
+
+Config lives at `~/.config/ai-tools/mcp.json` (passed verbatim to `MultiServerMCPClient`). Per-turn pattern: open all sessions, load tool sets, inject server `instructions` strings into the system prompt, then build a fresh agent for that turn with all MCP tools registered in the `ToolNode`.
+
+**Lazy tool loading** (`tools/lazy_mcp.py`) keeps schemas out of the model context until the LLM calls `search_mcp_tools(query)`. The companion `LazyMCPMiddleware` filters `request.tools` and re-seeds the unlocked set from prior `search_mcp_tools` results in history each turn.
 
 ### Tools (`src/tools/`)
 
-`standard_tools(web, git, fs, shell)` returns composable tool lists. Key tools:
-- **`edit_file`** — 3-pass fuzzy matching (exact → strip trailing whitespace → sliding-window SequenceMatcher ≥0.85)
-- **`run_d8`** — V8 JavaScript engine shell (parameter named `d8_args` to avoid Pydantic v1 collision)
-- **`ask_user`** — LangGraph interrupt for mid-turn clarification
+`standard_tools(web, git, fs, shell)` returns:
+- always: `web_fetch` (and `web_search` if `TAVILY_API_KEY` is set)
+- if `git=True` and cwd is in a git repo: `git_grep/show/blame/log/diff/status`, `read_around`
+- if `fs=True`: `read_file`, `grep_files`, `list_dir`, `edit_file`, `write_file`
+- if `shell=True`: `run_shell`
 
-### Gemini schema compatibility
-
-Gemini rejects tool schemas with missing `items` on array types. `graph.py` has schema-fixup logic for this. Tests in `src/tests/test_tool_schemas.py` validate all tool schemas pass Gemini's requirements.
+Notable:
+- **`edit_file`** — 3-pass fuzzy match: exact → strip-trailing-whitespace → sliding-window `SequenceMatcher` ≥ 0.85.
+- **`run_d8`** (`tools/shell.py`) — used only by `analyze.py` as `extra_tools`, never via `standard_tools`. The `d8_args` parameter name avoids the Pydantic v1 `ValidatedFunction` `v__args` ghost-field bug (see `tests/test_tool_schemas.py`).
+- **`ask_user`** — LangGraph `interrupt()` for clarification; only injected when `interrupt_on` is set (i.e. interactive).
+- HITL approval is enabled by default for `edit_file`/`write_file` (`Session.INTERRUPT_ON`); approval prompts show a unified diff first.
 
 ## Required environment variables
 
 ```sh
-export GOOGLE_API_KEY=...    # Gemini (required)
-export TAVILY_API_KEY=...    # Web search (required)
-export OPENAI_API_KEY=...    # Optional
-export DEEPSEEK_API_KEY=...  # Optional
-export ANTHROPIC_API_KEY=... # Optional
+export GOOGLE_API_KEY=...    # always (router uses lite)
+export TAVILY_API_KEY=...    # for web_search
+export OPENAI_API_KEY=...    # optional
+export DEEPSEEK_API_KEY=...  # optional
+export ANTHROPIC_API_KEY=... # optional
 ```
 
-MCP servers can be configured in `~/.config/ai-tools/mcp.json`.
+`~/.config/ai-tools/mcp.json` is optional MCP server config.
