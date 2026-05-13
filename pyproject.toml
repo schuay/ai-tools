@@ -9,6 +9,7 @@ dependencies = [
     "deepagents>=0.4.4",
     "langchain-deepseek>=1.0.1",
     "langchain-google-genai>=4.2.1",
+    "langchain-google-vertexai>=3.0.0",
     "langchain[google-genai]>=1.2.10",
     "langgraph>=1.0.10",
     "langgraph-checkpoint-sqlite>=3.0.3",

@@ -43,7 +43,23 @@ from tools import (
 
 DEFAULT_MODEL = "google_genai:gemini-3.1-pro-preview"
 FILTER_MODEL = "google_genai:gemini-3-flash-preview"
-MODEL_KWARGS = {"include_thoughts": True, "thinking_level": "low"}
+
+
+def _thinking_kwargs(model_id: str) -> dict:
+    """Provider-specific kwargs to enable low-budget thinking with thoughts.
+
+    google_genai (AI Studio): exposes `thinking_level` ("low"/"medium"/"high")
+    and `include_thoughts` directly.
+
+    google_vertexai (Vertex AI): exposes `thinking_budget` (token budget;
+    1024 is roughly the "low" tier) and `include_thoughts`.
+    """
+    if model_id.startswith("google_genai:"):
+        return {"include_thoughts": True, "thinking_level": "low"}
+    if model_id.startswith("google_vertexai:"):
+        return {"include_thoughts": True, "thinking_budget": 1024}
+    return {}
+
 
 FILTER_SYSTEM = """\
 You are a senior engineer triaging git commits to decide if they warrant deeper analysis.
@@ -582,6 +598,11 @@ def main() -> None:
         help=f"Analysis model (default: {DEFAULT_MODEL})",
     )
     parser.add_argument(
+        "--filter-model",
+        default=FILTER_MODEL,
+        help=f"Filter model (default: {FILTER_MODEL})",
+    )
+    parser.add_argument(
         "--branch", default="main", help="Branch to watch (default: main)"
     )
     parser.add_argument(
@@ -642,8 +663,8 @@ def main() -> None:
     # Point tools.git at the target repo
     _git_mod.REPO_ROOT = str(repo)
 
-    filter_model = init_chat_model(FILTER_MODEL)
-    analysis_model = init_chat_model(args.model, **MODEL_KWARGS)
+    filter_model = init_chat_model(args.filter_model)
+    analysis_model = init_chat_model(args.model, **_thinking_kwargs(args.model))
 
     if args.since_spec:
         remote_ref = f"{args.remote}/{args.branch}"
