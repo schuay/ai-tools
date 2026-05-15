@@ -127,18 +127,24 @@ class State:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()
-        self._data: dict = {"processed": [], "daemon_tip": None}
+        self._data: dict = {"processed": [], "failed": [], "daemon_tip": None}
         if path.exists():
             try:
                 self._data = json.loads(path.read_text())
-                # Normalise: ensure processed is a list (we keep as set internally)
             except Exception as e:
                 logging.warning("Could not load state file %s: %s", path, e)
+            self._data.setdefault("failed", [])
 
     @property
     def processed(self) -> set[str]:
         with self._lock:
             return set(self._data.get("processed", []))
+
+    @property
+    def failed(self) -> list[str]:
+        """Commits that failed processing; retried on every poll, FIFO."""
+        with self._lock:
+            return list(self._data.get("failed", []))
 
     @property
     def daemon_tip(self) -> str | None:
@@ -150,6 +156,16 @@ class State:
             processed = self._data.setdefault("processed", [])
             if commit_hash not in processed:
                 processed.append(commit_hash)
+            failed = self._data.setdefault("failed", [])
+            if commit_hash in failed:
+                failed.remove(commit_hash)
+            self._write_locked()
+
+    def mark_failed(self, commit_hash: str) -> None:
+        with self._lock:
+            failed = self._data.setdefault("failed", [])
+            if commit_hash not in failed:
+                failed.append(commit_hash)
             self._write_locked()
 
     def set_daemon_tip(self, commit_hash: str) -> None:
@@ -311,8 +327,9 @@ def _process_one(
     try:
         interesting, filter_tok = is_interesting(meta, filter_model)
     except Exception as e:
-        logging.warning("Filter failed for %s: %s — skipping", short, e)
+        logging.warning("Filter failed for %s: %s — will retry", short, e)
         stats.record(failed=True)
+        state.mark_failed(commit_hash)
         return
 
     if not interesting:
@@ -344,6 +361,7 @@ def _process_one(
     except Exception as e:
         logging.warning("%s → analysis failed: %s — will retry", short, e)
         stats.record(failed=True, filter_tokens=filter_tok)
+        state.mark_failed(commit_hash)
 
 
 def process_commits(
@@ -357,10 +375,19 @@ def process_commits(
     stop_event: threading.Event | None = None,
 ) -> None:
     already = state.processed
-    pending = [c for c in commits if c not in already]
+    retry = [c for c in state.failed if c not in already]
+    seen = set(retry)
+    fresh = [c for c in commits if c not in already and c not in seen]
+    pending = retry + fresh
     if not pending:
         logging.info("All %d commit(s) already processed.", len(commits))
         return
+    if retry:
+        logging.info(
+            "Retrying %d previously-failed commit(s) before %d new one(s).",
+            len(retry),
+            len(fresh),
+        )
 
     def _stopped() -> bool:
         return stop_event is not None and stop_event.is_set()
@@ -564,13 +591,13 @@ def run_daemon(
             tip = git_resolve(remote_ref)
             daemon_tip = state.daemon_tip
 
-            if tip == daemon_tip:
-                logging.debug("No new commits.")
-            elif tip.startswith("Error:"):
+            if tip.startswith("Error:"):
                 logging.warning("Could not resolve %s: %s", remote_ref, tip)
             else:
-                commits = git_commits_since(daemon_tip, tip)
-                if commits:
+                commits = (
+                    git_commits_since(daemon_tip, tip) if tip != daemon_tip else []
+                )
+                if commits or state.failed:
                     process_commits(
                         commits,
                         repo,
@@ -581,7 +608,8 @@ def run_daemon(
                         workers,
                         stop_event,
                     )
-                state.set_daemon_tip(tip)
+                if tip != daemon_tip:
+                    state.set_daemon_tip(tip)
         except Exception as e:
             logging.warning("Poll error: %s", e)
 
