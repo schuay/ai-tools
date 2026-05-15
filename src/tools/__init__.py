@@ -52,22 +52,33 @@ def _is_rate_limit(exc: Exception) -> bool:
     )
 
 
-def _invoke_with_backoff(fn, *args, max_retries: int = 8, **kwargs):
-    """Call fn(*args, **kwargs), retrying with exponential backoff on rate-limit errors."""
-    for attempt in range(max_retries):
+def _invoke_with_backoff(
+    fn,
+    *args,
+    max_retries: int | None = 100,
+    max_wait: float = 300.0,
+    **kwargs,
+):
+    """Call fn(*args, **kwargs), retrying with capped exponential backoff on rate-limit errors.
+
+    max_retries=None retries indefinitely. Non-rate-limit errors propagate immediately.
+    """
+    attempt = 0
+    while max_retries is None or attempt < max_retries:
         try:
             return fn(*args, **kwargs)
         except Exception as e:
             if not _is_rate_limit(e):
                 raise
-            wait = (2**attempt) + random.uniform(0, 1)
+            wait = min(max_wait, float(2**attempt)) + random.uniform(0, 1)
             logging.warning(
-                "Rate limited — retrying in %.0fs (attempt %d/%d)",
+                "Rate limited — retrying in %.0fs (attempt %d): %s",
                 wait,
                 attempt + 1,
-                max_retries,
+                str(e).splitlines()[0][:200],
             )
             time.sleep(wait)
+            attempt += 1
     raise RuntimeError(f"Rate limit persisted after {max_retries} retries")
 
 
@@ -85,11 +96,13 @@ def invoke_with_tools(
     user_prompt: str,
     *,
     stop_event: threading.Event | None = None,
+    max_retries: int | None = 100,
 ) -> tuple[str, int]:
     """Run a model.invoke loop, executing tool calls until a final text response.
 
     Returns (text, total_tokens). Retries on rate-limit errors with exponential
-    backoff. Raises InterruptedError if stop_event is set between turns.
+    backoff (pass max_retries=None for unlimited). Raises InterruptedError if
+    stop_event is set between turns.
     """
     bound = model.bind_tools(tools) if tools else model
     tool_map = {fn.__name__: fn for fn in tools}
@@ -107,7 +120,9 @@ def invoke_with_tools(
             turn,
             sum(len(str(m.content)) for m in messages),
         )
-        response: AIMessage = _invoke_with_backoff(bound.invoke, messages)
+        response: AIMessage = _invoke_with_backoff(
+            bound.invoke, messages, max_retries=max_retries
+        )
         turn_tokens = _token_count(response)
         total_tokens += turn_tokens
         messages.append(response)

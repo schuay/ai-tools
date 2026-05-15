@@ -224,6 +224,7 @@ def is_interesting(meta: dict, filter_model) -> tuple[bool, int]:
             SystemMessage(content=FILTER_SYSTEM),
             HumanMessage(content=prompt),
         ],
+        max_retries=None,
     )
     verdict = extract_text(response.content).strip().upper()
     return verdict.startswith("INTERESTING"), _token_count(response)
@@ -244,7 +245,12 @@ def analyse_commit(
         "Use git tools to gather the full context before writing your analysis."
     )
     return invoke_with_tools(
-        analysis_model, tools, ANALYSIS_SYSTEM, user_prompt, stop_event=stop_event
+        analysis_model,
+        tools,
+        ANALYSIS_SYSTEM,
+        user_prompt,
+        stop_event=stop_event,
+        max_retries=None,
     )
 
 
