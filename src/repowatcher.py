@@ -11,6 +11,7 @@ Usage:
 import argparse
 import json
 import logging
+import os
 import queue
 import re
 import signal
@@ -58,6 +59,18 @@ def _thinking_kwargs(model_id: str) -> dict:
         return {"include_thoughts": True, "thinking_level": "low"}
     if model_id.startswith("google_vertexai:"):
         return {"include_thoughts": True, "thinking_budget": 1024}
+    return {}
+
+
+def _provider_kwargs(model_id: str) -> dict:
+    """Provider-specific constructor kwargs (project, location, ...)."""
+    if model_id.startswith("google_vertexai:"):
+        kw: dict = {}
+        if loc := os.environ.get("GOOGLE_CLOUD_LOCATION"):
+            kw["location"] = loc
+        if proj := os.environ.get("GOOGLE_CLOUD_PROJECT"):
+            kw["project"] = proj
+        return kw
     return {}
 
 
@@ -663,8 +676,14 @@ def main() -> None:
     # Point tools.git at the target repo
     _git_mod.REPO_ROOT = str(repo)
 
-    filter_model = init_chat_model(args.filter_model)
-    analysis_model = init_chat_model(args.model, **_thinking_kwargs(args.model))
+    filter_model = init_chat_model(
+        args.filter_model, **_provider_kwargs(args.filter_model)
+    )
+    analysis_model = init_chat_model(
+        args.model,
+        **_thinking_kwargs(args.model),
+        **_provider_kwargs(args.model),
+    )
 
     if args.since_spec:
         remote_ref = f"{args.remote}/{args.branch}"
