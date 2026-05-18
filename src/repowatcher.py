@@ -46,6 +46,37 @@ DEFAULT_MODEL = "google_genai:gemini-3.1-pro-preview"
 FILTER_MODEL = "google_genai:gemini-3-flash-preview"
 
 
+def _load_gcp_env_defaults() -> None:
+    """Apply [gcp] from ~/.config/ai-tools/config.toml as env defaults.
+
+    Sets GOOGLE_CLOUD_{PROJECT,LOCATION,QUOTA_PROJECT} only when the env
+    var is unset, so external overrides win. Lets repowatcher target a
+    specific GCP project (e.g. a Gemini playground for Vertex AI quota)
+    independent of the machine-wide ADC default that other tools use.
+    """
+    import tomllib
+
+    from platformdirs import user_config_path
+
+    path = user_config_path("ai-tools") / "config.toml"
+    try:
+        cfg = tomllib.loads(path.read_text())
+    except FileNotFoundError:
+        return
+    gcp = cfg.get("gcp") or {}
+
+    for key, env in (
+        ("project", "GOOGLE_CLOUD_PROJECT"),
+        ("location", "GOOGLE_CLOUD_LOCATION"),
+        ("quota_project", "GOOGLE_CLOUD_QUOTA_PROJECT"),
+    ):
+        if env not in os.environ and (val := gcp.get(key)):
+            os.environ[env] = val
+    if "GOOGLE_CLOUD_QUOTA_PROJECT" not in os.environ:
+        if proj := os.environ.get("GOOGLE_CLOUD_PROJECT"):
+            os.environ["GOOGLE_CLOUD_QUOTA_PROJECT"] = proj
+
+
 def _thinking_kwargs(model_id: str) -> dict:
     """Provider-specific kwargs to enable low-budget thinking with thoughts.
 
@@ -689,6 +720,8 @@ def main() -> None:
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     args = parser.parse_args()
+
+    _load_gcp_env_defaults()
 
     logging.basicConfig(
         level=getattr(logging, args.log_level),
